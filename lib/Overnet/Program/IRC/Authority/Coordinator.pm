@@ -9,8 +9,8 @@ our $VERSION = '0.001';
 
 sub _event_id {
   my ($event) = @_;
-  return undef unless ref($event) eq 'HASH';
-  return undef unless defined($event->{id}) && !ref($event->{id}) && length($event->{id});
+  return unless ref($event) eq 'HASH';
+  return unless defined($event->{id}) && !ref($event->{id}) && length($event->{id});
   return $event->{id};
 }
 
@@ -113,68 +113,76 @@ sub authoritative_channel_subscription_ids {
 
 sub ensure_authoritative_grant_subscription {
   my ($server) = @_;
-  return undef unless $server->_authority_relay_enabled;
+  return unless $server->_authority_relay_enabled;
 
   my $subscription_id = $server->{authoritative_grant_subscription_id}
     || authoritative_grant_subscription_id($server);
   return $subscription_id
     if $server->{authoritative_grant_subscription_id};
 
-  $server->_request(
-    method => 'nostr.open_subscription',
-    params => {
-      subscription_id => $subscription_id,
-      relay_url       => $server->_authority_relay_url,
-      timeout_ms      => $server->_authority_relay_query_timeout_ms,
-      filters         => [
-        {
-          kinds => [ $server->_authority_grant_kind ],
-          limit => 200,
-        },
-      ],
-    },
-  );
+  my $opened = eval {
+    $server->_request(
+      method => 'nostr.open_subscription',
+      params => {
+        subscription_id => $subscription_id,
+        relay_url       => $server->_authority_relay_url,
+        timeout_ms      => $server->_authority_relay_query_timeout_ms,
+        filters         => [
+          {
+            kinds => [ $server->_authority_grant_kind ],
+            limit => 200,
+          },
+        ],
+      },
+    );
+    1;
+  };
+  return unless $opened;
   $server->{authoritative_grant_subscription_id} = $subscription_id;
   return $subscription_id;
 }
 
 sub ensure_authoritative_discovery_subscription {
   my ($server) = @_;
-  return undef unless $server->_authority_relay_enabled;
-  return undef unless $server->_authority_profile eq 'nip29';
+  return unless $server->_authority_relay_enabled;
+  return unless $server->_authority_profile eq 'nip29';
 
   my $subscription_id = $server->{authoritative_discovery_subscription_id}
     || authoritative_discovery_subscription_id($server);
   return $subscription_id
     if $server->{authoritative_discovery_subscription_id};
 
-  $server->_request(
-    method => 'nostr.open_subscription',
-    params => {
-      subscription_id => $subscription_id,
-      relay_url       => $server->_authority_relay_url,
-      timeout_ms      => $server->_authority_relay_query_timeout_ms,
-      filters         => [
-        {
-          kinds => [ 39000, 9002 ],
-          limit => 1_000,
-        },
-      ],
-    },
-  );
+  my $opened = eval {
+    $server->_request(
+      method => 'nostr.open_subscription',
+      params => {
+        subscription_id => $subscription_id,
+        relay_url       => $server->_authority_relay_url,
+        timeout_ms      => $server->_authority_relay_query_timeout_ms,
+        filters         => [
+          {
+            kinds => [ 39000, 9002 ],
+            limit => 1_000,
+          },
+        ],
+      },
+    );
+    1;
+  };
+  return unless $opened;
   $server->{authoritative_discovery_subscription_id} = $subscription_id;
   return $subscription_id;
 }
 
 sub ensure_authoritative_channel_subscription {
   my ($server, $channel) = @_;
-  return undef unless $server->_authority_relay_enabled;
-  return undef unless $server->_is_authoritative_channel($channel);
+  return unless $server->_authority_relay_enabled;
+  return unless $server->_is_authoritative_channel($channel);
 
   my $canonical = $server->_canonical_channel_name($channel);
-  return undef unless defined $canonical;
+  return unless defined $canonical;
   my (undef, $group_id) = $server->_authoritative_group_binding($canonical);
-  return undef unless defined $group_id;
+  return unless defined $group_id;
 
   my @subscription_specs = (
     [
@@ -204,15 +212,19 @@ sub ensure_authoritative_channel_subscription {
     my ($subscription_id, $filters) = @{$spec};
     next unless defined $subscription_id;
     if (!$server->{authoritative_subscription_channels}{$subscription_id}) {
-      $server->_request(
-        method => 'nostr.open_subscription',
-        params => {
-          subscription_id => $subscription_id,
-          relay_url       => $server->_authority_relay_url,
-          timeout_ms      => $server->_authority_relay_query_timeout_ms,
-          filters         => $filters,
-        },
-      );
+      my $opened = eval {
+        $server->_request(
+          method => 'nostr.open_subscription',
+          params => {
+            subscription_id => $subscription_id,
+            relay_url       => $server->_authority_relay_url,
+            timeout_ms      => $server->_authority_relay_query_timeout_ms,
+            filters         => $filters,
+          },
+        );
+        1;
+      };
+      next unless $opened;
       $server->{authoritative_subscription_channels}{$subscription_id} = $canonical;
     }
     push @subscription_ids, $subscription_id;

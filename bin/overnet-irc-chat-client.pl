@@ -43,7 +43,7 @@ die "--nick is required\n"
 die "--port must be between 0 and 65535\n"
   unless defined $options{port}
     && !ref($options{port})
-    && $options{port} =~ /\A(?:0|[1-9]\d{0,4})\z/
+    && $options{port} =~ /\A(?:0|[1-9]\d{0,4})\z/mx
     && $options{port} <= 65535;
 
 $options{username} = $options{nick}
@@ -111,9 +111,9 @@ while (!$done) {
         unless defined $bytes && $bytes > 0;
 
       $socket_buffer .= $chunk;
-      while ($socket_buffer =~ s/\A([^\n]*\n)//) {
+      while ($socket_buffer =~ s/\A([^\n]*\n)//mx) {
         my $line = $1;
-        $line =~ s/\r?\n\z//;
+        $line =~ s/\r?\n\z//mx;
         next unless length $line;
         $done = _handle_server_line(
           socket         => $socket,
@@ -135,7 +135,7 @@ while (!$done) {
       last;
     }
 
-    $input =~ s/\r?\n\z//;
+    $input =~ s/\r?\n\z//mx;
     next unless length $input;
     my $handled = eval {
       _handle_user_input(
@@ -165,12 +165,12 @@ sub _handle_server_line {
   my $registered_ref = $args{registered_ref};
   my $auto_join_sent = $args{auto_join_sent};
 
-  if ($line =~ /\APING :(.*)\z/i) {
+  if ($line =~ /\APING\ :(.*)\z/imx) {
     _send_line($socket, 'PONG :' . $1);
     return 0;
   }
 
-  if ($line =~ /\A:\S+\s+001\s+/) {
+  if ($line =~ /\A:\S+\s+001\s+/mx) {
     $$registered_ref = 1;
     if ($args{auto_join} && !$$auto_join_sent && defined $args{channel} && length $args{channel}) {
       _send_line($socket, 'JOIN ' . $args{channel});
@@ -189,39 +189,39 @@ sub _handle_user_input {
   my $current_target_ref = $args{current_target};
   my $done_ref = $args{done};
 
-  if ($input =~ m{\A/help\z}) {
+  if ($input =~ m{\A/help\z}mx) {
     print _help_text();
     return 1;
   }
 
-  if ($input =~ m{\A/join\s+(\S+)\z}) {
+  if ($input =~ m{\A/join\s+(\S+)\z}mx) {
     $$current_target_ref = $1;
     _send_line($socket, 'JOIN ' . $1);
     return 1;
   }
 
-  if ($input =~ m{\A/target\s+(\S+)\z}) {
+  if ($input =~ m{\A/target\s+(\S+)\z}mx) {
     $$current_target_ref = $1;
     print "Current target set to $1\n";
     return 1;
   }
 
-  if ($input =~ m{\A/msg\s+(\S+)\s+(.+)\z}) {
+  if ($input =~ m{\A/msg\s+(\S+)\s+(.+)\z}mx) {
     _send_line($socket, sprintf('PRIVMSG %s :%s', $1, $2));
     return 1;
   }
 
-  if ($input =~ m{\A/notice\s+(\S+)\s+(.+)\z}) {
+  if ($input =~ m{\A/notice\s+(\S+)\s+(.+)\z}mx) {
     _send_line($socket, sprintf('NOTICE %s :%s', $1, $2));
     return 1;
   }
 
-  if ($input =~ m{\A/topic\s+(\S+)\s+(.+)\z}) {
+  if ($input =~ m{\A/topic\s+(\S+)\s+(.+)\z}mx) {
     _send_line($socket, sprintf('TOPIC %s :%s', $1, $2));
     return 1;
   }
 
-  if ($input =~ m{\A/names(?:\s+(\S+))?\z}) {
+  if ($input =~ m{\A/names(?:\s+(\S+))?\z}mx) {
     my $target = defined $1 ? $1 : $$current_target_ref;
     die "No current target for /names\n"
       unless defined $target && length $target;
@@ -229,7 +229,7 @@ sub _handle_user_input {
     return 1;
   }
 
-  if ($input =~ m{\A/part(?:\s+(\S+))?(?:\s+(.+))?\z}) {
+  if ($input =~ m{\A/part(?:\s+(\S+))?(?:\s+(.+))?\z}mx) {
     my $target = defined $1 ? $1 : $$current_target_ref;
     die "No current target for /part\n"
       unless defined $target && length $target;
@@ -239,17 +239,17 @@ sub _handle_user_input {
     return 1;
   }
 
-  if ($input =~ m{\A/nick\s+(\S+)\z}) {
+  if ($input =~ m{\A/nick\s+(\S+)\z}mx) {
     _send_line($socket, 'NICK ' . $1);
     return 1;
   }
 
-  if ($input =~ m{\A/raw\s+(.+)\z}) {
+  if ($input =~ m{\A/raw\s+(.+)\z}mx) {
     _send_line($socket, $1);
     return 1;
   }
 
-  if ($input =~ m{\A/quit(?:\s+(.+))?\z}) {
+  if ($input =~ m{\A/quit(?:\s+(.+))?\z}mx) {
     my $reason = defined $1 ? $1 : 'client quit';
     _send_line($socket, 'QUIT :' . $reason);
     $$done_ref = 1;
@@ -266,35 +266,35 @@ sub _handle_user_input {
 sub _format_server_line {
   my ($line) = @_;
 
-  if ($line =~ /\A:([^ ]+)\s+PRIVMSG\s+(\S+)\s+:(.*)\z/) {
+  if ($line =~ /\A:([^ ]+)\s+PRIVMSG\s+(\S+)\s+:(.*)\z/mx) {
     return sprintf('<%s -> %s> %s', $1, $2, $3);
   }
 
-  if ($line =~ /\A:([^ ]+)\s+NOTICE\s+(\S+)\s+:(.*)\z/) {
+  if ($line =~ /\A:([^ ]+)\s+NOTICE\s+(\S+)\s+:(.*)\z/mx) {
     return sprintf('-%s -> %s- %s', $1, $2, $3);
   }
 
-  if ($line =~ /\A:([^ ]+)\s+JOIN\s+(\S+)\z/) {
+  if ($line =~ /\A:([^ ]+)\s+JOIN\s+(\S+)\z/mx) {
     return sprintf('* %s joined %s', $1, $2);
   }
 
-  if ($line =~ /\A:([^ ]+)\s+PART\s+(\S+)(?:\s+:(.*))?\z/) {
+  if ($line =~ /\A:([^ ]+)\s+PART\s+(\S+)(?:\s+:(.*))?\z/mx) {
     return defined $3 && length $3
       ? sprintf('* %s left %s (%s)', $1, $2, $3)
       : sprintf('* %s left %s', $1, $2);
   }
 
-  if ($line =~ /\A:([^ ]+)\s+QUIT(?:\s+:(.*))?\z/) {
+  if ($line =~ /\A:([^ ]+)\s+QUIT(?:\s+:(.*))?\z/mx) {
     return defined $2 && length $2
       ? sprintf('* %s quit (%s)', $1, $2)
       : sprintf('* %s quit', $1);
   }
 
-  if ($line =~ /\A:([^ ]+)\s+TOPIC\s+(\S+)\s+:(.*)\z/) {
+  if ($line =~ /\A:([^ ]+)\s+TOPIC\s+(\S+)\s+:(.*)\z/mx) {
     return sprintf('* %s changed the topic on %s to: %s', $1, $2, $3);
   }
 
-  if ($line =~ /\A:\S+\s+353\s+\S+\s+=\s+(\S+)\s+:(.*)\z/) {
+  if ($line =~ /\A:\S+\s+353\s+\S+\s+=\s+(\S+)\s+:(.*)\z/mx) {
     return sprintf('* names for %s: %s', $1, $2);
   }
 

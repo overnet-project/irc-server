@@ -264,16 +264,16 @@ sub _authorize_artifact {
 
 sub _maybe_parse_bridge_line {
   my ($class, $line) = @_;
-  $line =~ s/\r?\n\z//;
+  $line =~ s/\r?\n\z//mx;
 
-  if ($line =~ /\bOVERNETAUTH\s+CHALLENGE\s+([0-9a-f]{64})\b/i) {
+  if ($line =~ /\bOVERNETAUTH\s+CHALLENGE\s+([0-9a-f]{64})\b/imx) {
     return {
       type      => 'auth',
       challenge => lc $1,
     };
   }
 
-  if ($line =~ /\bOVERNETAUTH\s+DELEGATE\s+([0-9a-f]{64})\s+(\S+)\s+(\S+)\s+(\d+)\b/i) {
+  if ($line =~ /\bOVERNETAUTH\s+DELEGATE\s+([0-9a-f]{64})\s+(\S+)\s+(\S+)\s+(\d+)\b/imx) {
     return {
       type            => 'delegate',
       delegate_pubkey => lc $1,
@@ -283,18 +283,18 @@ sub _maybe_parse_bridge_line {
     };
   }
 
-  return undef;
+  return;
 }
 
 sub _maybe_parse_sasl_chunk {
   my ($class, $line) = @_;
-  $line =~ s/\r?\n\z//;
+  $line =~ s/\r?\n\z//mx;
 
-  return undef
-    unless $line =~ /\A(?::\S+\s+)?AUTHENTICATE\s+(\S+)\z/i;
+  return
+    unless $line =~ /\A(?::\S+\s+)?AUTHENTICATE\s+(\S+)\z/imx;
 
   my $chunk = $1;
-  return undef if uc($chunk) eq 'NOSTR';
+  return if uc($chunk) eq 'NOSTR';
 
   return {
     chunk => $chunk,
@@ -408,7 +408,7 @@ sub _service_identity_descriptor {
   my $scheme = $args{service_identity_scheme};
   my $value = $args{service_identity_value};
 
-  return undef
+  return
     unless defined($scheme) || defined($value) || defined($args{service_identity_display});
 
   die "--service-identity-scheme and --service-identity-value are required together\n"

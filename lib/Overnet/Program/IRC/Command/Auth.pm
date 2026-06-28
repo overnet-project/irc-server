@@ -32,7 +32,7 @@ sub handle_cap {
     }
     $client->{cap_negotiation_active} = 1 if !$client->{registered};
 
-    my @requested = grep { defined($_) && length($_) } split /\s+/, $params[1];
+    my @requested = grep { defined($_) && length($_) } split /\s+/mx, $params[1];
     my %supported = map { $_ => 1 } @supported;
     if (@requested && !grep { !$supported{$_} } @requested) {
       $client->{capabilities}{$_} = 1 for @requested;
@@ -150,11 +150,11 @@ sub handle_overnetauth {
     );
     unless ($validation->{valid}) {
       my $reason = $validation->{reason} || '';
-      my $message = $reason =~ /kind 22242/i
+      my $message = $reason =~ /kind\ 22242/imx
         ? 'OVERNETAUTH AUTH requires kind 22242'
-        : $reason =~ /challenge/i
+        : $reason =~ /challenge/imx
         ? 'OVERNETAUTH AUTH challenge does not match'
-        : $reason =~ /relay scope/i
+        : $reason =~ /relay\ scope/imx
         ? 'OVERNETAUTH AUTH relay scope does not match'
         : 'OVERNETAUTH AUTH requires a valid signed Nostr event';
       $server->_send_server_notice($client_id, $message);
@@ -222,21 +222,21 @@ sub handle_overnetauth {
     );
     unless ($validation->{valid}) {
       my $reason = $validation->{reason} || '';
-      my $message = $reason =~ /wrong event kind/i
+      my $message = $reason =~ /wrong\ event\ kind/imx
         ? 'OVERNETAUTH DELEGATE uses the wrong event kind'
-        : $reason =~ /authenticated user/i
+        : $reason =~ /authenticated\ user/imx
         ? 'OVERNETAUTH DELEGATE pubkey does not match the authenticated user'
-        : $reason =~ /relay does not match/i
+        : $reason =~ /relay\ does\ not\ match/imx
         ? 'OVERNETAUTH DELEGATE relay does not match'
-        : $reason =~ /server scope/i
+        : $reason =~ /server\ scope/imx
         ? 'OVERNETAUTH DELEGATE server scope does not match'
-        : $reason =~ /delegate pubkey/i
+        : $reason =~ /delegate\ pubkey/imx
         ? 'OVERNETAUTH DELEGATE delegate pubkey does not match'
-        : $reason =~ /session does not match/i
+        : $reason =~ /session\ does\ not\ match/imx
         ? 'OVERNETAUTH DELEGATE session does not match'
-        : $reason =~ /expiration does not match/i
+        : $reason =~ /expiration\ does\ not\ match/imx
         ? 'OVERNETAUTH DELEGATE expiration does not match'
-        : $reason =~ /relay publish failed/i
+        : $reason =~ /relay\ publish\ failed/imx
         ? 'OVERNETAUTH DELEGATE relay publish failed'
         : 'OVERNETAUTH DELEGATE requires a valid signed Nostr event';
       $server->_send_server_notice($client_id, $message);
@@ -252,7 +252,7 @@ sub handle_overnetauth {
 
 sub start_sasl_nostr_exchange {
   my ($server, $client) = @_;
-  return undef unless ref($client) eq 'HASH';
+  return unless ref($client) eq 'HASH';
 
   my $challenge = $server->_generate_authoritative_auth_challenge($client);
   my %payload = (
@@ -262,7 +262,7 @@ sub start_sasl_nostr_exchange {
 
   if ($server->_authority_relay_enabled) {
     my $delegate = ensure_authoritative_delegate_offer($server, $client);
-    return undef unless ref($delegate) eq 'HASH';
+    return unless ref($delegate) eq 'HASH';
     @payload{qw(relay_url grant_kind delegate_pubkey session_id expires_at)} = (
       $delegate->{relay_url},
       $delegate->{grant_kind},
@@ -422,7 +422,7 @@ sub set_authoritative_account {
 
 sub _normalized_account {
   my ($account) = @_;
-  return undef unless defined($account) && !ref($account) && length($account);
+  return unless defined($account) && !ref($account) && length($account);
   return $account;
 }
 
@@ -477,7 +477,7 @@ sub _clear_authoritative_delegate_state {
 
 sub ensure_authoritative_delegate_offer {
   my ($server, $client) = @_;
-  return undef unless ref($client) eq 'HASH';
+  return unless ref($client) eq 'HASH';
 
   if (!ref($client->{authority_delegate_key}) || ref($client->{authority_delegate_key}) ne 'Overnet::Core::Nostr::Key') {
     $client->{authority_delegate_key} = Overnet::Core::Nostr->generate_key;
@@ -507,7 +507,7 @@ sub accept_authoritative_delegate_event {
   } unless ref($client) eq 'HASH'
     && defined $client->{authority_pubkey}
     && !ref($client->{authority_pubkey})
-    && $client->{authority_pubkey} =~ /\A[0-9a-f]{64}\z/;
+    && $client->{authority_pubkey} =~ /\A[0-9a-f]{64}\z/mx;
 
   my $validation = Overnet::Authority::Delegation->verify_delegation_grant(
     authority_pubkey => $client->{authority_pubkey},

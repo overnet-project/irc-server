@@ -22,7 +22,7 @@ my $challenge = '6cf8a952df516a8e691c6138496516abe84ccfefa9678f518bb52f70b1ca966
 my $scope = 'irc://irc.example.test/overnet';
 
 {
-  package t::irc_auth_daemon_e2e::FakeListener;
+  package t::irc_auth_daemon_e2e::FakeListener; ## no critic (Modules::RequireFilenameMatchesPackage)
 
   sub new {
     my ($class, %args) = @_;
@@ -76,7 +76,7 @@ subtest 'helper consumes artifacts from a daemon started from config' => sub {
     quote       => 1,
   );
 
-  my ($payload) = $wire =~ qr{\A/quote OVERNETAUTH AUTH (\S+)\n\z};
+  my ($payload) = $wire =~ qr{\A/quote\ OVERNETAUTH\ AUTH\ (\S+)\n\z}mx;
   ok defined $payload, 'helper returns a paste-ready OVERNETAUTH AUTH line';
 
   my $event = JSON::decode_json(decode_base64($payload));
@@ -101,7 +101,7 @@ subtest 'helper consumes artifacts from a daemon started from config' => sub {
     quote            => 1,
   );
 
-  my ($delegate_payload) = $delegate_wire =~ qr{\A/quote OVERNETAUTH DELEGATE (\S+)\n\z};
+  my ($delegate_payload) = $delegate_wire =~ qr{\A/quote\ OVERNETAUTH\ DELEGATE\ (\S+)\n\z}mx;
   ok defined $delegate_payload, 'helper returns a paste-ready OVERNETAUTH DELEGATE line';
 
   my $delegate_event = JSON::decode_json(decode_base64($delegate_payload));
@@ -153,7 +153,7 @@ subtest 'helper bridge mode consumes a continuous stream against the daemon' => 
 
   close $out or die "close output failed: $!";
   is $count, 2, 'bridge stream emitted two auth commands';
-  like $output, qr{\A/quote OVERNETAUTH AUTH \S+\n/quote OVERNETAUTH DELEGATE \S+\n\z},
+  like $output, qr{\A/quote\ OVERNETAUTH\ AUTH\ \S+\n/quote\ OVERNETAUTH\ DELEGATE\ \S+\n\z}mx,
     'bridge stream produced both auth commands from the daemon-backed flow';
 
   _wait_for_child($pid, 'daemon exits cleanly after the bridge stream flow');
@@ -199,10 +199,10 @@ subtest 'helper bridge mode answers SASL NOSTR AUTHENTICATE challenge streams ag
   );
 
   close $out or die "close output failed: $!";
-  my @lines = grep { length } split /\n/, $output;
+  my @lines = grep { length } split /\n/mx, $output;
   ok @lines >= 1, 'sasl bridge emitted AUTHENTICATE commands';
   is $count, scalar(@lines), 'sasl bridge count matches emitted AUTHENTICATE commands';
-  like $lines[0], qr{\A/quote AUTHENTICATE \S+\z},
+  like $lines[0], qr{\A/quote\ AUTHENTICATE\ \S+\z}mx,
     'sasl bridge emits IRC AUTHENTICATE commands';
 
   my $response = _decode_authenticate_output($output);
@@ -263,6 +263,7 @@ sub _wait_for_child {
   my ($pid, $name) = @_;
   waitpid($pid, 0);
   is $? >> 8, 0, $name;
+  return;
 }
 
 sub _write_config {
@@ -306,6 +307,7 @@ sub _write_config {
     or die "write $path failed: $!";
   close $fh
     or die "close $path failed: $!";
+  return;
 }
 
 sub _authenticate_input_lines {
@@ -325,12 +327,12 @@ sub _decode_authenticate_output {
   my $payload = join '',
     map {
       my $line = $_;
-      $line =~ s/\A\/quote\s+//;
-      $line =~ s/\AAUTHENTICATE\s+//;
+      $line =~ s/\A\/quote\s+//mx;
+      $line =~ s/\AAUTHENTICATE\s+//mx;
       $line eq '+' ? () : $line;
     }
     grep { length }
-    split /\n/, $output;
+    split /\n/mx, $output;
 
   return JSON::decode_json(decode_base64($payload));
 }

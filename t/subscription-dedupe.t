@@ -5,7 +5,7 @@ use Test::More;
 use Overnet::Program::IRC::Authority::Coordinator;
 
 {
-  package TestSubscriptionServer;
+  package TestSubscriptionServer; ## no critic (Modules::RequireFilenameMatchesPackage)
   use parent 'Overnet::Program::IRC::Server';
 
   sub _render_subscription_item {

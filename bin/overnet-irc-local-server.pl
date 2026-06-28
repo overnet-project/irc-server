@@ -51,7 +51,7 @@ if ($help) {
 die "listen-port must be between 0 and 65535\n"
   unless defined $options{listen_port}
     && !ref($options{listen_port})
-    && $options{listen_port} =~ /\A(?:0|[1-9]\d{0,4})\z/
+    && $options{listen_port} =~ /\A(?:0|[1-9]\d{0,4})\z/mx
     && $options{listen_port} <= 65535;
 
 my $signing_key_file = defined $options{signing_key_file} && length $options{signing_key_file}
@@ -225,7 +225,7 @@ sub _wait_for_ready_details {
       return 0;
     },
   );
-  return undef unless $ready;
+  return unless $ready;
 
   for my $notification (@{$host->observed_notifications}) {
     next unless ($notification->{method} || '') eq 'program.health';
@@ -234,7 +234,7 @@ sub _wait_for_ready_details {
     return $notification->{params}{details};
   }
 
-  return undef;
+  return;
 }
 
 sub _print_new_notifications {
@@ -262,6 +262,7 @@ sub _print_new_notifications {
     print STDERR ": $message" if length $message;
     print STDERR "\n";
   }
+  return;
 }
 
 sub _ensure_signing_key {
@@ -298,7 +299,7 @@ sub _ensure_tls_material {
     [ IP  => '127.0.0.1' ],
   );
   if (defined $listen_host && length $listen_host && $listen_host ne 'localhost' && $listen_host ne '127.0.0.1') {
-    if ($listen_host =~ /\A\d{1,3}(?:\.\d{1,3}){3}\z/) {
+    if ($listen_host =~ /\A\d{1,3}(?:\.\d{1,3}){3}\z/mx) {
       push @subject_alt_names, [ IP => $listen_host ];
     } else {
       push @subject_alt_names, [ DNS => $listen_host ];
@@ -339,7 +340,7 @@ sub _hexchat_connect_host {
 sub _shell_quote {
   my ($value) = @_;
   $value = '' unless defined $value;
-  $value =~ s/'/'"'"'/g;
+  $value =~ s/'/'"'"'/gmx;
   return "'$value'";
 }
 

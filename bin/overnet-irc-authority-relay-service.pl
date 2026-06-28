@@ -42,11 +42,11 @@ if ($help) {
 die "--host is required\n"
   unless defined $options{host} && !ref($options{host}) && length($options{host});
 die "--port must be a non-negative integer\n"
-  unless defined $options{port} && !ref($options{port}) && $options{port} =~ /\A\d+\z/;
+  unless defined $options{port} && !ref($options{port}) && $options{port} =~ /\A\d+\z/mx;
 die "--grant-kind must be a positive integer\n"
   unless defined $options{grant_kind}
     && !ref($options{grant_kind})
-    && $options{grant_kind} =~ /\A[1-9]\d*\z/;
+    && $options{grant_kind} =~ /\A[1-9]\d*\z/mx;
 die "--store-file must be a non-empty string\n"
   if defined $options{store_file} && (ref($options{store_file}) || $options{store_file} eq '');
 
@@ -168,6 +168,7 @@ sub _stop_child {
 
   close $child->{stdout} if $child->{stdout};
   close $child->{stderr} if $child->{stderr};
+  return;
 }
 
 sub _wait_for_relay_ready {

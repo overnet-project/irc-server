@@ -14,7 +14,7 @@ use lib grep { -d $_ } (
 use Overnet::Program::IRC::Auth::Helper;
 
 {
-  package t::irc_auth_helper::FakeClient;
+  package t::irc_auth_helper::FakeClient; ## no critic (Modules::RequireFilenameMatchesPackage)
 
   sub new {
     my ($class, %args) = @_;
@@ -85,7 +85,7 @@ subtest 'auth mode uses the auth agent and emits a paste-ready OVERNETAUTH AUTH 
     interactive => 1,
   );
 
-  my ($payload) = $output =~ qr{\A/quote OVERNETAUTH AUTH (\S+)\n\z};
+  my ($payload) = $output =~ qr{\A/quote\ OVERNETAUTH\ AUTH\ (\S+)\n\z}mx;
   ok defined $payload, 'the helper prints a paste-ready OVERNETAUTH AUTH command';
   is_deeply JSON::decode_json(decode_base64($payload)), $event,
     'the helper preserves the signed auth event returned by the auth agent';
@@ -172,7 +172,7 @@ subtest 'delegate mode uses the auth agent and emits a paste-ready OVERNETAUTH D
     interactive      => 1,
   );
 
-  my ($payload) = $output =~ qr{\A/quote OVERNETAUTH DELEGATE (\S+)\n\z};
+  my ($payload) = $output =~ qr{\A/quote\ OVERNETAUTH\ DELEGATE\ (\S+)\n\z}mx;
   ok defined $payload, 'the helper prints a paste-ready OVERNETAUTH DELEGATE command';
   is_deeply JSON::decode_json(decode_base64($payload)), $event,
     'the helper preserves the signed delegate event returned by the auth agent';
@@ -250,7 +250,7 @@ subtest 'bridge mode parses OVERNETAUTH CHALLENGE lines and requests auth artifa
     interactive => 1,
   );
 
-  like $output, qr{\A/quote OVERNETAUTH AUTH \S+\n\z}, 'bridge mode emits an OVERNETAUTH AUTH command';
+  like $output, qr{\A/quote\ OVERNETAUTH\ AUTH\ \S+\n\z}mx, 'bridge mode emits an OVERNETAUTH AUTH command';
   is $client->calls->[0]{params}{action}, 'session.authenticate',
     'bridge mode maps challenge lines to session.authenticate';
   is $client->calls->[0]{params}{challenge}{value}, $challenge,
@@ -300,7 +300,7 @@ subtest 'bridge mode parses OVERNETAUTH DELEGATE lines and requests delegate art
     interactive => 1,
   );
 
-  like $output, qr{\A/quote OVERNETAUTH DELEGATE \S+\n\z}, 'bridge mode emits an OVERNETAUTH DELEGATE command';
+  like $output, qr{\A/quote\ OVERNETAUTH\ DELEGATE\ \S+\n\z}mx, 'bridge mode emits an OVERNETAUTH DELEGATE command';
   is $client->calls->[0]{params}{action}, 'session.delegate',
     'bridge mode maps delegate lines to session.delegate';
   is_deeply $client->calls->[0]{params}{artifacts}[0]{params}{tags}, [
@@ -395,7 +395,7 @@ subtest 'bridge mode processes a continuous stdin stream and emits quote command
 
   close $out or die "close output failed: $!";
   is $count, 2, 'bridge mode reports the number of emitted auth commands';
-  like $output, qr{\A/quote OVERNETAUTH AUTH \S+\n/quote OVERNETAUTH DELEGATE \S+\n\z},
+  like $output, qr{\A/quote\ OVERNETAUTH\ AUTH\ \S+\n/quote\ OVERNETAUTH\ DELEGATE\ \S+\n\z}mx,
     'bridge mode emits one quote command per matching auth line';
   is scalar(@{$client->calls}), 2, 'only matching OVERNETAUTH lines reach the auth agent';
   is $client->calls->[0]{params}{challenge}{value}, $challenge, 'stream mode extracted the challenge';
@@ -481,9 +481,9 @@ subtest 'bridge mode stream can emit payloads without /quote prefixes' => sub {
 
   close $out or die "close output failed: $!";
   is $count, 1, 'bridge mode reports one generated payload';
-  unlike $output, qr{\A/quote },
+  unlike $output, qr{\A/quote\ }mx,
     'bridge mode omits /quote when quote output is disabled';
-  like $output, qr{\A\S+\n\z},
+  like $output, qr{\A\S+\n\z}mx,
     'bridge mode still emits the auth payload on its own line';
 };
 
@@ -537,10 +537,10 @@ subtest 'bridge mode processes SASL NOSTR AUTHENTICATE streams without relay del
   );
 
   close $out or die "close output failed: $!";
-  my @lines = grep { length } split /\n/, $output;
+  my @lines = grep { length } split /\n/mx, $output;
   ok @lines >= 1, 'sasl bridge emitted AUTHENTICATE lines';
   is $count, scalar(@lines), 'sasl bridge count matches emitted AUTHENTICATE lines';
-  like $lines[0], qr{\A/quote AUTHENTICATE \S+\z}, 'sasl bridge emits AUTHENTICATE commands';
+  like $lines[0], qr{\A/quote\ AUTHENTICATE\ \S+\z}mx, 'sasl bridge emits AUTHENTICATE commands';
 
   my $response = _decode_authenticate_output($output);
   is_deeply $response, {
@@ -667,11 +667,11 @@ subtest 'bridge mode processes relay-backed SASL NOSTR AUTHENTICATE streams' => 
   );
 
   close $out or die "close output failed: $!";
-  my @lines = grep { length } split /\n/, $output;
+  my @lines = grep { length } split /\n/mx, $output;
   ok @lines >= 1, 'relay-backed sasl bridge emitted AUTHENTICATE lines';
   is $count, scalar(@lines), 'relay-backed sasl bridge count matches emitted AUTHENTICATE lines';
-  like $lines[0], qr{\AAUTHENTICATE \S+\z}, 'relay-backed sasl bridge can emit raw AUTHENTICATE lines';
-  unlike $lines[0], qr{\A/quote }, 'relay-backed sasl bridge omits /quote when disabled';
+  like $lines[0], qr{\AAUTHENTICATE\ \S+\z}mx, 'relay-backed sasl bridge can emit raw AUTHENTICATE lines';
+  unlike $lines[0], qr{\A/quote\ }mx, 'relay-backed sasl bridge omits /quote when disabled';
 
   my $response = _decode_authenticate_output($output);
   is_deeply $response, {
@@ -742,7 +742,7 @@ subtest 'auth mode forwards locator and service identity descriptors to the auth
     interactive              => 1,
   );
 
-  like $output, qr{\A\S+\n\z}, 'auth mode still returns a wire payload';
+  like $output, qr{\A\S+\n\z}mx, 'auth mode still returns a wire payload';
   is_deeply $client->calls->[0]{params}{service}, {
     locators => [ $locator ],
     service_identity => {
@@ -791,7 +791,7 @@ subtest 'service identity flags require both scheme and value' => sub {
     1;
   } ? undef : $@;
 
-  like $error, qr/--service-identity-scheme and --service-identity-value are required together/,
+  like $error, qr/--service-identity-scheme\ and\ --service-identity-value\ are\ required\ together/mx,
     'partial service identity descriptors are rejected';
   is scalar @{$client->calls}, 0, 'the auth agent is not called on invalid service identity input';
 };
@@ -813,12 +813,12 @@ sub _decode_authenticate_output {
   my $payload = join '',
     map {
       my $line = $_;
-      $line =~ s/\A\/quote\s+//;
-      $line =~ s/\AAUTHENTICATE\s+//;
+      $line =~ s/\A\/quote\s+//mx;
+      $line =~ s/\AAUTHENTICATE\s+//mx;
       $line eq '+' ? () : $line;
     }
     grep { length }
-    split /\n/, $output;
+    split /\n/mx, $output;
 
   return JSON::decode_json(decode_base64($payload));
 }

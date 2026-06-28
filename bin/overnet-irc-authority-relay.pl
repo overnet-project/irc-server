@@ -36,9 +36,9 @@ if ($help) {
 die "--host is required\n"
   unless defined $opt{host} && !ref($opt{host}) && length($opt{host});
 die "--port must be a non-negative integer\n"
-  unless defined $opt{port} && !ref($opt{port}) && $opt{port} =~ /\A\d+\z/;
+  unless defined $opt{port} && !ref($opt{port}) && $opt{port} =~ /\A\d+\z/mx;
 die "--grant-kind must be a positive integer\n"
-  unless defined $opt{grant_kind} && !ref($opt{grant_kind}) && $opt{grant_kind} =~ /\A[1-9]\d*\z/;
+  unless defined $opt{grant_kind} && !ref($opt{grant_kind}) && $opt{grant_kind} =~ /\A[1-9]\d*\z/mx;
 die "--store-file must be a non-empty string\n"
   if defined $opt{store_file} && (ref($opt{store_file}) || $opt{store_file} eq '');
 

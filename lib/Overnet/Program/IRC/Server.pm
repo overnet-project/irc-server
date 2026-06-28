@@ -73,7 +73,7 @@ sub new {
 sub _is_shutdown_sentinel_error {
   my ($error) = @_;
   return 0 unless defined $error && !ref($error);
-  return $error =~ /\A__shutdown__(?:\s+at\b.*)?\z/s ? 1 : 0;
+  return $error =~ /\A__shutdown__(?:\s+at\b.*)?\z/smx ? 1 : 0;
 }
 
 sub run {
@@ -204,6 +204,7 @@ sub _handle_runtime_init {
     },
   );
   $self->{initialized} = 1;
+  return;
 }
 
 sub _handle_runtime_shutdown {
@@ -214,6 +215,7 @@ sub _handle_runtime_shutdown {
     )
   );
   $self->{shutdown_complete} = 1;
+  return;
 }
 
 sub _load_runtime_init {
@@ -248,9 +250,9 @@ sub _load_runtime_init {
   die "config.listen_host is required\n"
     unless defined $listen_host && !ref($listen_host) && length($listen_host);
   die "config.listen_port must be an integer between 0 and 65535\n"
-    unless defined $listen_port && !ref($listen_port) && $listen_port =~ /\A(?:0|[1-9]\d{0,4})\z/ && $listen_port <= 65535;
+    unless defined $listen_port && !ref($listen_port) && $listen_port =~ /\A(?:0|[1-9]\d{0,4})\z/mx && $listen_port <= 65535;
   die "config.listen_backlog must be a positive integer\n"
-    unless defined $listen_backlog && !ref($listen_backlog) && $listen_backlog =~ /\A[1-9]\d*\z/;
+    unless defined $listen_backlog && !ref($listen_backlog) && $listen_backlog =~ /\A[1-9]\d*\z/mx;
   die "config.server_name is required\n"
     unless defined $server_name && !ref($server_name) && length($server_name);
   die "config.signing_key_file is required\n"
@@ -268,13 +270,13 @@ sub _load_runtime_init {
       die "config.authority_relay.poll_interval_ms must be a positive integer\n"
         unless defined $authority_relay->{poll_interval_ms}
           && !ref($authority_relay->{poll_interval_ms})
-          && $authority_relay->{poll_interval_ms} =~ /\A[1-9]\d*\z/;
+          && $authority_relay->{poll_interval_ms} =~ /\A[1-9]\d*\z/mx;
     }
     if (exists $authority_relay->{query_timeout_ms}) {
       die "config.authority_relay.query_timeout_ms must be a positive integer\n"
         unless defined $authority_relay->{query_timeout_ms}
           && !ref($authority_relay->{query_timeout_ms})
-          && $authority_relay->{query_timeout_ms} =~ /\A[1-9]\d*\z/;
+          && $authority_relay->{query_timeout_ms} =~ /\A[1-9]\d*\z/mx;
     }
   }
 
@@ -497,9 +499,9 @@ sub _pump_client_socket {
   }
 
   $client->{read_buffer} = $probe_buffer;
-  while ($client->{read_buffer} =~ s/\A([^\n]*\n)//) {
+  while ($client->{read_buffer} =~ s/\A([^\n]*\n)//mx) {
     my $line = $1;
-    $line =~ s/\r?\n\z//;
+    $line =~ s/\r?\n\z//mx;
     next unless length $line;
     $self->_handle_client_line($client_id, $line);
     last unless exists $self->{clients}{$client_id};
@@ -661,7 +663,7 @@ sub _handle_client_line {
     my $subcommand = uc($params[0]);
     if ($subcommand eq 'SET') {
       my $pubkey = lc $params[1];
-      if ($pubkey !~ /\A[0-9a-f]{64}\z/) {
+      if ($pubkey !~ /\A[0-9a-f]{64}\z/mx) {
         $self->_send_server_notice($client_id, 'OVERNETKEY SET requires a 64-character lowercase hex pubkey');
         return 1;
       }
@@ -1337,9 +1339,14 @@ sub _send_topic_reply {
   my $target = $self->_client_numeric_target($client);
 
   if ($self->_is_authoritative_channel($display_channel)) {
-    my $view = $self->_derive_authoritative_channel_view($display_channel);
-    $view = $self->_derive_authoritative_channel_view($display_channel, force => 1)
+    my $cached_view = $self->_cached_authoritative_channel_view($display_channel);
+    my $view = $self->_authority_relay_enabled
+      ? eval { $self->_derive_authoritative_channel_view($display_channel, force => 1) }
+      : $self->_derive_authoritative_channel_view($display_channel);
+    $view = $cached_view
       unless ref($view) eq 'HASH';
+    $view = $self->_derive_authoritative_channel_view($display_channel, force => 1)
+      if !$self->_authority_relay_enabled && ref($view) ne 'HASH';
     $self->_sync_authoritative_topic_state_from_view($display_channel, $view);
     if (ref($view) eq 'HASH' && exists $view->{topic}) {
       return $self->_send_client_line($client_id,
@@ -1461,7 +1468,7 @@ sub _client_numeric_target {
 
 sub _irc_casefold {
   my ($self, $value) = @_;
-  return undef unless defined $value && !ref($value);
+  return unless defined $value && !ref($value);
 
   my $folded = $value;
   $folded =~ tr/A-Z[]\\^/a-z{}|~/;
@@ -1470,7 +1477,7 @@ sub _irc_casefold {
 
 sub _nick_key {
   my ($self, $nick) = @_;
-  return undef unless defined $nick && !ref($nick) && length($nick);
+  return unless defined $nick && !ref($nick) && length($nick);
   return $self->_irc_casefold($nick);
 }
 
@@ -1513,20 +1520,20 @@ sub _presentational_host_for_client {
 sub _canonical_current_nick {
   my ($self, $nick) = @_;
   my $key = $self->_nick_key($nick);
-  return undef unless defined $key;
+  return unless defined $key;
 
   my $client_id = $self->{nick_to_client_id}{$key};
-  return undef unless defined $client_id && exists $self->{clients}{$client_id};
+  return unless defined $client_id && exists $self->{clients}{$client_id};
   return $self->{clients}{$client_id}{nick};
 }
 
 sub _client_for_current_nick {
   my ($self, $nick) = @_;
   my $key = $self->_nick_key($nick);
-  return undef unless defined $key;
+  return unless defined $key;
 
   my $client_id = $self->{nick_to_client_id}{$key};
-  return undef unless defined $client_id && exists $self->{clients}{$client_id};
+  return unless defined $client_id && exists $self->{clients}{$client_id};
   return $self->{clients}{$client_id};
 }
 
@@ -1539,8 +1546,8 @@ sub _client_has_capability {
 
 sub _client_account_name {
   my ($self, $client) = @_;
-  return undef unless ref($client) eq 'HASH';
-  return undef unless defined($client->{authority_pubkey}) && !ref($client->{authority_pubkey}) && length($client->{authority_pubkey});
+  return unless ref($client) eq 'HASH';
+  return unless defined($client->{authority_pubkey}) && !ref($client->{authority_pubkey}) && length($client->{authority_pubkey});
   return $client->{authority_pubkey};
 }
 
@@ -1561,14 +1568,14 @@ sub _authority_relay_config {
 sub _authority_relay_url {
   my ($self) = @_;
   my $config = $self->_authority_relay_config;
-  return undef unless ref($config) eq 'HASH';
+  return unless ref($config) eq 'HASH';
   return $config->{url};
 }
 
 sub _authority_relay_poll_interval_ms {
   my ($self) = @_;
   my $config = $self->_authority_relay_config;
-  return undef unless ref($config) eq 'HASH';
+  return unless ref($config) eq 'HASH';
   return $config->{poll_interval_ms};
 }
 
@@ -1579,7 +1586,7 @@ sub _authority_relay_query_timeout_ms {
     ? $config->{query_timeout_ms}
     : undef;
   $timeout_ms = 1_000
-    unless defined $timeout_ms && !ref($timeout_ms) && $timeout_ms =~ /\A[1-9]\d*\z/;
+    unless defined $timeout_ms && !ref($timeout_ms) && $timeout_ms =~ /\A[1-9]\d*\z/mx;
   return $timeout_ms;
 }
 
@@ -1664,7 +1671,7 @@ sub _authoritative_group_binding {
 sub _authoritative_nip29_stream_name {
   my ($self, $channel) = @_;
   my ($group_host, $group_id) = $self->_authoritative_group_binding($channel);
-  return undef unless defined $group_host && defined $group_id;
+  return unless defined $group_host && defined $group_id;
 
   return join ':',
     'irc.authority.nip29',
@@ -1694,7 +1701,8 @@ sub _authoritative_channels {
     next unless $self->_is_authoritative_channel($channel_name);
     $channels{$channel_key} ||= $channel_name;
   }
-  return sort values %channels;
+  my @channel_names = sort values %channels;
+  return @channel_names;
 }
 
 sub _authoritative_grant_subscription_id {
@@ -1795,9 +1803,9 @@ sub _authoritative_channel_is_known {
 
 sub _derive_authoritative_view_from_events {
   my ($self, $operation, $channel, $authoritative_events, %args) = @_;
-  return undef unless defined $operation && !ref($operation) && length($operation);
-  return undef unless $self->_is_authoritative_channel($channel);
-  return undef unless ref($authoritative_events) eq 'ARRAY';
+  return unless defined $operation && !ref($operation) && length($operation);
+  return unless $self->_is_authoritative_channel($channel);
+  return unless ref($authoritative_events) eq 'ARRAY';
 
   my $result = eval {
     $self->_request(
@@ -1816,8 +1824,8 @@ sub _derive_authoritative_view_from_events {
       },
     );
   };
-  return undef if $@;
-  return undef unless ref($result->{view}) eq 'ARRAY' && @{$result->{view}};
+  return if $@;
+  return unless ref($result->{view}) eq 'ARRAY' && @{$result->{view}};
   return $result->{view}[0];
 }
 
@@ -1833,8 +1841,8 @@ sub _derive_authoritative_channel_view_from_events {
 
 sub _derive_authoritative_join_admission_from_events {
   my ($self, $channel, $authoritative_events, %args) = @_;
-  return undef unless $self->_is_authoritative_channel($channel);
-  return undef unless ref($authoritative_events) eq 'ARRAY';
+  return unless $self->_is_authoritative_channel($channel);
+  return unless ref($authoritative_events) eq 'ARRAY';
 
   my $result = eval {
     $self->_request(
@@ -1853,16 +1861,16 @@ sub _derive_authoritative_join_admission_from_events {
       },
     );
   };
-  return undef if $@;
-  return undef unless ref($result->{admission}) eq 'ARRAY' && @{$result->{admission}};
+  return if $@;
+  return unless ref($result->{admission}) eq 'ARRAY' && @{$result->{admission}};
   return $result->{admission}[0];
 }
 
 sub _derive_authoritative_permission_from_events {
   my ($self, $operation, $channel, $authoritative_events, %args) = @_;
-  return undef unless defined $operation && !ref($operation) && length($operation);
-  return undef unless $self->_is_authoritative_channel($channel);
-  return undef unless ref($authoritative_events) eq 'ARRAY';
+  return unless defined $operation && !ref($operation) && length($operation);
+  return unless $self->_is_authoritative_channel($channel);
+  return unless ref($authoritative_events) eq 'ARRAY';
 
   my $result = eval {
     $self->_request(
@@ -1881,17 +1889,17 @@ sub _derive_authoritative_permission_from_events {
       },
     );
   };
-  return undef if $@;
-  return undef unless ref($result->{permission}) eq 'ARRAY' && @{$result->{permission}};
+  return if $@;
+  return unless ref($result->{permission}) eq 'ARRAY' && @{$result->{permission}};
   return $result->{permission}[0];
 }
 
 sub _derive_authoritative_view {
   my ($self, $operation, $channel, %args) = @_;
-  return undef unless defined $operation && !ref($operation) && length($operation);
-  return undef unless $self->_is_authoritative_channel($channel);
+  return unless defined $operation && !ref($operation) && length($operation);
+  return unless $self->_is_authoritative_channel($channel);
   my $canonical = $self->_canonical_channel_name($channel);
-  return undef unless defined $canonical;
+  return unless defined $canonical;
   my $cache = $self->{authoritative_channel_cache}{$canonical};
   my $refresh = $args{force} || !$cache || ref($cache->{events}) ne 'ARRAY';
   if ($refresh) {
@@ -1902,7 +1910,7 @@ sub _derive_authoritative_view {
     $cache = $self->{authoritative_channel_cache}{$canonical};
   }
 
-  return undef unless $cache && ref($cache->{events}) eq 'ARRAY';
+  return unless $cache && ref($cache->{events}) eq 'ARRAY';
   return $self->_derive_authoritative_view_from_events(
     $operation,
     $canonical,
@@ -1913,7 +1921,7 @@ sub _derive_authoritative_view {
 
 sub _authoritative_channel_state_from_view {
   my ($self, $view) = @_;
-  return undef unless ref($view) eq 'HASH';
+  return unless ref($view) eq 'HASH';
 
   return {
     operation         => 'authoritative_channel_state',
@@ -1957,9 +1965,9 @@ sub _authoritative_channel_state_from_view {
 
 sub _derive_authoritative_channel_view {
   my ($self, $channel, %args) = @_;
-  return undef unless $self->_is_authoritative_channel($channel);
+  return unless $self->_is_authoritative_channel($channel);
   my $canonical = $self->_canonical_channel_name($channel);
-  return undef unless defined $canonical;
+  return unless defined $canonical;
   my $cache = $self->{authoritative_channel_cache}{$canonical};
   my $refresh = $args{force} || !$cache || !exists($cache->{view});
   if ($refresh) {
@@ -1985,13 +1993,23 @@ sub _derive_authoritative_channel_view {
     }
   }
 
-  return undef unless $cache && ref($cache->{events}) eq 'ARRAY';
+  return unless $cache && ref($cache->{events}) eq 'ARRAY';
   return $self->_derive_authoritative_channel_view_from_events(
     $canonical,
     $cache->{events},
     %args,
   ) if defined $args{actor_pubkey};
 
+  return $cache->{view};
+}
+
+sub _cached_authoritative_channel_view {
+  my ($self, $channel) = @_;
+  my $canonical = $self->_canonical_channel_name($channel);
+  return unless defined $canonical;
+
+  my $cache = $self->{authoritative_channel_cache}{$canonical};
+  return unless ref($cache) eq 'HASH' && ref($cache->{view}) eq 'HASH';
   return $cache->{view};
 }
 
@@ -2015,9 +2033,9 @@ sub _derive_authoritative_list_entry_view {
 
 sub _derive_authoritative_join_admission {
   my ($self, $channel, %args) = @_;
-  return undef unless $self->_is_authoritative_channel($channel);
+  return unless $self->_is_authoritative_channel($channel);
   my $canonical = $self->_canonical_channel_name($channel);
-  return undef unless defined $canonical;
+  return unless defined $canonical;
   my $cache = $self->{authoritative_channel_cache}{$canonical};
   my $refresh = $args{force} || !$cache || ref($cache->{events}) ne 'ARRAY';
   if ($refresh) {
@@ -2043,7 +2061,7 @@ sub _derive_authoritative_join_admission {
     }
   }
 
-  return undef unless $cache && ref($cache->{events}) eq 'ARRAY';
+  return unless $cache && ref($cache->{events}) eq 'ARRAY';
   return $self->_derive_authoritative_join_admission_from_events(
     $canonical,
     $cache->{events},
@@ -2053,9 +2071,9 @@ sub _derive_authoritative_join_admission {
 
 sub _derive_authoritative_speak_permission {
   my ($self, $channel, %args) = @_;
-  return undef unless $self->_is_authoritative_channel($channel);
+  return unless $self->_is_authoritative_channel($channel);
   my $canonical = $self->_canonical_channel_name($channel);
-  return undef unless defined $canonical;
+  return unless defined $canonical;
   my $cache = $self->{authoritative_channel_cache}{$canonical};
   my $refresh = $args{force} || !$cache || ref($cache->{events}) ne 'ARRAY';
   if ($refresh) {
@@ -2066,7 +2084,7 @@ sub _derive_authoritative_speak_permission {
     $cache = $self->{authoritative_channel_cache}{$canonical};
   }
 
-  return undef unless $cache && ref($cache->{events}) eq 'ARRAY';
+  return unless $cache && ref($cache->{events}) eq 'ARRAY';
   return $self->_derive_authoritative_permission_from_events(
     'authoritative_speak_permission',
     $canonical,
@@ -2077,9 +2095,9 @@ sub _derive_authoritative_speak_permission {
 
 sub _derive_authoritative_topic_permission {
   my ($self, $channel, %args) = @_;
-  return undef unless $self->_is_authoritative_channel($channel);
+  return unless $self->_is_authoritative_channel($channel);
   my $canonical = $self->_canonical_channel_name($channel);
-  return undef unless defined $canonical;
+  return unless defined $canonical;
   my $cache = $self->{authoritative_channel_cache}{$canonical};
   my $refresh = $args{force} || !$cache || ref($cache->{events}) ne 'ARRAY';
   if ($refresh) {
@@ -2090,7 +2108,7 @@ sub _derive_authoritative_topic_permission {
     $cache = $self->{authoritative_channel_cache}{$canonical};
   }
 
-  return undef unless $cache && ref($cache->{events}) eq 'ARRAY';
+  return unless $cache && ref($cache->{events}) eq 'ARRAY';
   return $self->_derive_authoritative_permission_from_events(
     'authoritative_topic_permission',
     $canonical,
@@ -2101,9 +2119,9 @@ sub _derive_authoritative_topic_permission {
 
 sub _derive_authoritative_mode_write_permission {
   my ($self, $channel, %args) = @_;
-  return undef unless $self->_is_authoritative_channel($channel);
+  return unless $self->_is_authoritative_channel($channel);
   my $canonical = $self->_canonical_channel_name($channel);
-  return undef unless defined $canonical;
+  return unless defined $canonical;
   my $cache = $self->{authoritative_channel_cache}{$canonical};
   my $refresh = $args{force} || !$cache || ref($cache->{events}) ne 'ARRAY';
   if ($refresh) {
@@ -2114,7 +2132,7 @@ sub _derive_authoritative_mode_write_permission {
     $cache = $self->{authoritative_channel_cache}{$canonical};
   }
 
-  return undef unless $cache && ref($cache->{events}) eq 'ARRAY';
+  return unless $cache && ref($cache->{events}) eq 'ARRAY';
   return $self->_derive_authoritative_permission_from_events(
     'authoritative_mode_write_permission',
     $canonical,
@@ -2129,9 +2147,9 @@ sub _derive_authoritative_mode_write_permission {
 
 sub _derive_authoritative_channel_action_permission {
   my ($self, $channel, %args) = @_;
-  return undef unless $self->_is_authoritative_channel($channel);
+  return unless $self->_is_authoritative_channel($channel);
   my $canonical = $self->_canonical_channel_name($channel);
-  return undef unless defined $canonical;
+  return unless defined $canonical;
   my $cache = $self->{authoritative_channel_cache}{$canonical};
   my $refresh = $args{force} || !$cache || ref($cache->{events}) ne 'ARRAY';
   if ($refresh) {
@@ -2142,7 +2160,7 @@ sub _derive_authoritative_channel_action_permission {
     $cache = $self->{authoritative_channel_cache}{$canonical};
   }
 
-  return undef unless $cache && ref($cache->{events}) eq 'ARRAY';
+  return unless $cache && ref($cache->{events}) eq 'ARRAY';
   return $self->_derive_authoritative_permission_from_events(
     'authoritative_channel_action_permission',
     $canonical,
@@ -2209,25 +2227,25 @@ sub _read_authoritative_grant_events {
 
 sub _client_authoritative_pubkey {
   my ($self, $client) = @_;
-  return undef unless ref($client) eq 'HASH';
-  return undef unless defined $client->{authority_pubkey} && !ref($client->{authority_pubkey}) && length($client->{authority_pubkey});
+  return unless ref($client) eq 'HASH';
+  return unless defined $client->{authority_pubkey} && !ref($client->{authority_pubkey}) && length($client->{authority_pubkey});
   return $client->{authority_pubkey};
 }
 
 sub _effective_authoritative_actor_pubkey_from_event {
   my ($self, $event) = @_;
-  return undef unless ref($event) eq 'HASH';
+  return unless ref($event) eq 'HASH';
 
   my %tags = $self->_first_tag_values($event->{tags});
   return $tags{overnet_actor}
     if defined $tags{overnet_actor}
       && !ref($tags{overnet_actor})
-      && $tags{overnet_actor} =~ /\A[0-9a-f]{64}\z/;
+      && $tags{overnet_actor} =~ /\A[0-9a-f]{64}\z/mx;
   return $event->{pubkey}
     if defined $event->{pubkey}
       && !ref($event->{pubkey})
-      && $event->{pubkey} =~ /\A[0-9a-f]{64}\z/;
-  return undef;
+      && $event->{pubkey} =~ /\A[0-9a-f]{64}\z/mx;
+  return;
 }
 
 sub _authoritative_grant_nick_map {
@@ -2240,12 +2258,12 @@ sub _authoritative_grant_nick_map {
   for my $event (@{$self->_read_authoritative_grant_events}) {
     next unless ref($event) eq 'HASH';
     next unless ($event->{kind} || 0) == $self->_authority_grant_kind;
-    next unless defined $event->{pubkey} && !ref($event->{pubkey}) && $event->{pubkey} =~ /\A[0-9a-f]{64}\z/;
+    next unless defined $event->{pubkey} && !ref($event->{pubkey}) && $event->{pubkey} =~ /\A[0-9a-f]{64}\z/mx;
 
     my %tags = $self->_first_tag_values($event->{tags});
     next unless defined $tags{relay} && $tags{relay} eq $self->_authority_relay_url;
     next if defined $tags{expires_at}
-      && $tags{expires_at} =~ /\A\d+\z/
+      && $tags{expires_at} =~ /\A\d+\z/mx
       && $tags{expires_at} < time();
     next unless defined $tags{nick} && !ref($tags{nick}) && length($tags{nick});
 
@@ -2265,7 +2283,7 @@ sub _authoritative_grant_nick_map {
 
 sub _authoritative_nick_for_pubkey {
   my ($self, $pubkey) = @_;
-  return undef unless defined $pubkey && !ref($pubkey) && $pubkey =~ /\A[0-9a-f]{64}\z/;
+  return unless defined $pubkey && !ref($pubkey) && $pubkey =~ /\A[0-9a-f]{64}\z/mx;
 
   for my $client_id (sort keys %{$self->{clients}}) {
     my $client = $self->{clients}{$client_id};
@@ -2277,16 +2295,16 @@ sub _authoritative_nick_for_pubkey {
   }
 
   my $nick_map = $self->_authoritative_grant_nick_map;
-  return undef unless ref($nick_map) eq 'HASH';
+  return unless ref($nick_map) eq 'HASH';
   return $nick_map->{$pubkey}{nick}
     if ref($nick_map->{$pubkey}) eq 'HASH';
-  return undef;
+  return;
 }
 
 sub _authoritative_member_for_pubkey {
   my ($self, $state, $pubkey, %args) = @_;
-  return undef unless ref($state) eq 'HASH';
-  return undef unless defined $pubkey && !ref($pubkey) && length($pubkey);
+  return unless ref($state) eq 'HASH';
+  return unless defined $pubkey && !ref($pubkey) && length($pubkey);
   my $field = defined $args{field} && !ref($args{field}) && length($args{field})
     ? $args{field}
     : 'members';
@@ -2297,7 +2315,7 @@ sub _authoritative_member_for_pubkey {
     return $member if $member->{pubkey} eq $pubkey;
   }
 
-  return undef;
+  return;
 }
 
 sub _authoritative_roles_for_client {
@@ -2348,7 +2366,7 @@ sub _channel_mode_enabled {
   return 0 unless ref($state) eq 'HASH';
   return 0 unless defined $mode_letter && !ref($mode_letter) && length($mode_letter) == 1;
   my $channel_modes = $state->{channel_modes} || '';
-  return $channel_modes =~ /\Q$mode_letter\E/ ? 1 : 0;
+  return $channel_modes =~ /\Q$mode_letter\E/mx ? 1 : 0;
 }
 
 sub _authoritative_channel_state_for_enforcement {
@@ -2398,8 +2416,8 @@ sub _authoritative_group_metadata_from_state {
 
 sub _authoritative_irc_mask_for_client {
   my ($self, $client) = @_;
-  return undef unless ref($client) eq 'HASH';
-  return undef unless defined $client->{nick} && !ref($client->{nick}) && length($client->{nick});
+  return unless ref($client) eq 'HASH';
+  return unless defined $client->{nick} && !ref($client->{nick}) && length($client->{nick});
 
   my $username = defined $client->{username} && !ref($client->{username}) && length($client->{username})
     ? $client->{username}
@@ -2415,16 +2433,16 @@ sub _authoritative_irc_mask_for_client {
 
 sub _authoritative_topic_line_from_view {
   my ($self, $channel, $view) = @_;
-  return undef unless ref($view) eq 'HASH';
-  return undef unless exists $view->{topic};
+  return unless ref($view) eq 'HASH';
+  return unless exists $view->{topic};
 
   my $display_channel = $self->_canonical_channel_name($channel);
-  return undef unless defined $display_channel;
+  return unless defined $display_channel;
 
   my $prefix = $self->{config}{server_name};
   if (defined $view->{topic_actor_pubkey}
       && !ref($view->{topic_actor_pubkey})
-      && $view->{topic_actor_pubkey} =~ /\A[0-9a-f]{64}\z/) {
+      && $view->{topic_actor_pubkey} =~ /\A[0-9a-f]{64}\z/mx) {
     $prefix = $self->_authoritative_nick_for_pubkey($view->{topic_actor_pubkey})
       || $prefix;
   }
@@ -2553,6 +2571,23 @@ sub _authoritative_join_admission_for_client {
           reconcile_pending_invites => 1,
         )
       : $self->_derive_authoritative_join_admission($channel, force => 1);
+  }
+  if ($self->_authority_relay_enabled
+      && defined $pubkey
+      && ref($admission) eq 'HASH'
+      && !$admission->{allowed}
+      && (($admission->{reason} || '') eq '+i')
+      && !defined($admission->{invite_code})) {
+    my $refreshed_admission = $self->_derive_authoritative_join_admission(
+      $channel,
+      force                     => 1,
+      actor_pubkey              => $pubkey,
+      actor_mask                => $actor_mask,
+      (defined($join_key) ? (extra_input => { join_key => $join_key }) : ()),
+      reconcile_pending_invites => 1,
+    );
+    $admission = $refreshed_admission
+      if $self->_authoritative_join_admission_is_populated($refreshed_admission);
   }
   return {
     allowed => 0,
@@ -2770,31 +2805,31 @@ sub _authoritative_mode_write_permission_for_client {
     allowed => 1,
     reason  => '',
   );
-  if ($mode =~ /\A[+-][ov]\z/ && defined($mode_args->[0])) {
+  if ($mode =~ /\A[+-][ov]\z/mx && defined($mode_args->[0])) {
     my $target_pubkey = $mode_args->[0];
     my $member = $self->_authoritative_member_for_pubkey($state, $target_pubkey) || {};
     $permission{target_pubkey} = $target_pubkey;
     $permission{current_roles} = [ @{$member->{roles} || []} ];
-  } elsif ($mode =~ /\A[+-][b]\z/ && defined($mode_args->[0])) {
+  } elsif ($mode =~ /\A[+-][b]\z/mx && defined($mode_args->[0])) {
     $permission{normalized_ban_mask} = $mode_args->[0];
     $permission{group_metadata} = $self->_authoritative_group_metadata_from_state($state);
-  } elsif ($mode =~ /\A[+-][e]\z/ && defined($mode_args->[0])) {
+  } elsif ($mode =~ /\A[+-][e]\z/mx && defined($mode_args->[0])) {
     $permission{normalized_exception_mask} = $mode_args->[0];
     $permission{group_metadata} = $self->_authoritative_group_metadata_from_state($state);
-  } elsif ($mode =~ /\A[+-][I]\z/ && defined($mode_args->[0])) {
+  } elsif ($mode =~ /\A[+-][I]\z/mx && defined($mode_args->[0])) {
     $permission{normalized_invite_exception_mask} = $mode_args->[0];
     $permission{group_metadata} = $self->_authoritative_group_metadata_from_state($state);
-  } elsif ($mode =~ /\A\+k\z/ && defined($mode_args->[0])) {
+  } elsif ($mode =~ /\A\+k\z/mx && defined($mode_args->[0])) {
     $permission{channel_key} = $mode_args->[0];
     $permission{group_metadata} = $self->_authoritative_group_metadata_from_state($state);
-  } elsif ($mode =~ /\A-k\z/) {
+  } elsif ($mode =~ /\A-k\z/mx) {
     $permission{group_metadata} = $self->_authoritative_group_metadata_from_state($state);
-  } elsif ($mode =~ /\A\+l\z/ && defined($mode_args->[0])) {
+  } elsif ($mode =~ /\A\+l\z/mx && defined($mode_args->[0])) {
     $permission{user_limit} = 0 + $mode_args->[0];
     $permission{group_metadata} = $self->_authoritative_group_metadata_from_state($state);
-  } elsif ($mode =~ /\A-l\z/) {
+  } elsif ($mode =~ /\A-l\z/mx) {
     $permission{group_metadata} = $self->_authoritative_group_metadata_from_state($state);
-  } elsif ($mode =~ /\A[+-][imt]\z/) {
+  } elsif ($mode =~ /\A[+-][imt]\z/mx) {
     $permission{group_metadata} = $self->_authoritative_group_metadata_from_state($state);
   }
 
@@ -3170,11 +3205,13 @@ sub _handle_authoritative_mode_command {
     unless ref($state) eq 'HASH';
 
   if ($mode eq '+b' && (!defined($params[2]) || ref($params[2]) || !length($params[2]))) {
-    my $ban_list_view = $self->_derive_authoritative_ban_list_view($channel);
+    my $ban_list_view = $self->_authority_relay_enabled
+      ? eval { $self->_derive_authoritative_ban_list_view($channel, force => 1) }
+      : $self->_derive_authoritative_ban_list_view($channel);
     $ban_list_view = $self->_derive_authoritative_ban_list_view(
       $channel,
       force => 1,
-    ) unless ref($ban_list_view) eq 'HASH';
+    ) if !$self->_authority_relay_enabled && ref($ban_list_view) ne 'HASH';
     my $ban_masks = ref($ban_list_view) eq 'HASH' && ref($ban_list_view->{ban_masks}) eq 'ARRAY'
       ? $ban_list_view->{ban_masks}
       : $state->{ban_masks} || [];
@@ -3186,9 +3223,13 @@ sub _handle_authoritative_mode_command {
   }
 
   if ($mode eq '+e' && (!defined($params[2]) || ref($params[2]) || !length($params[2]))) {
-    my $view = $self->_derive_authoritative_channel_view($channel);
-    $view = $self->_derive_authoritative_channel_view($channel, force => 1)
+    my $view = $self->_authority_relay_enabled
+      ? eval { $self->_derive_authoritative_channel_view($channel, force => 1) }
+      : $self->_derive_authoritative_channel_view($channel);
+    $view = $self->_cached_authoritative_channel_view($channel)
       unless ref($view) eq 'HASH';
+    $view = $self->_derive_authoritative_channel_view($channel, force => 1)
+      if !$self->_authority_relay_enabled && ref($view) ne 'HASH';
     for my $exception_mask (@{ref($view) eq 'HASH' && ref($view->{exception_masks}) eq 'ARRAY' ? $view->{exception_masks} : []}) {
       $self->_send_exception_list_entry($client_id, $channel, $exception_mask);
     }
@@ -3197,9 +3238,13 @@ sub _handle_authoritative_mode_command {
   }
 
   if ($mode eq '+I' && (!defined($params[2]) || ref($params[2]) || !length($params[2]))) {
-    my $view = $self->_derive_authoritative_channel_view($channel);
-    $view = $self->_derive_authoritative_channel_view($channel, force => 1)
+    my $view = $self->_authority_relay_enabled
+      ? eval { $self->_derive_authoritative_channel_view($channel, force => 1) }
+      : $self->_derive_authoritative_channel_view($channel);
+    $view = $self->_cached_authoritative_channel_view($channel)
       unless ref($view) eq 'HASH';
+    $view = $self->_derive_authoritative_channel_view($channel, force => 1)
+      if !$self->_authority_relay_enabled && ref($view) ne 'HASH';
     for my $invite_exception_mask (@{ref($view) eq 'HASH' && ref($view->{invite_exception_masks}) eq 'ARRAY' ? $view->{invite_exception_masks} : []}) {
       $self->_send_invite_exception_list_entry($client_id, $channel, $invite_exception_mask);
     }
@@ -3209,7 +3254,7 @@ sub _handle_authoritative_mode_command {
 
   my @mode_args;
   my $mode_line = sprintf(':%s MODE %s %s', $client->{nick}, $channel, $mode);
-  if ($mode =~ /\A[+-][ov]\z/) {
+  if ($mode =~ /\A[+-][ov]\z/mx) {
     return $self->_send_need_more_params($client_id, 'MODE')
       unless defined $params[2] && !ref($params[2]) && length($params[2]);
 
@@ -3224,25 +3269,25 @@ sub _handle_authoritative_mode_command {
       unless defined $target_pubkey;
     @mode_args = ($target_pubkey);
     $mode_line .= ' ' . $target_nick;
-  } elsif ($mode =~ /\A[+-][beIklimt]\z/) {
-    if ($mode =~ /\A[+-]b\z/) {
+  } elsif ($mode =~ /\A[+-][beIklimt]\z/mx) {
+    if ($mode =~ /\A[+-]b\z/mx) {
       return $self->_send_need_more_params($client_id, 'MODE')
         unless defined $params[2] && !ref($params[2]) && length($params[2]);
       @mode_args = ($params[2]);
       $mode_line .= ' ' . $params[2];
-    } elsif ($mode =~ /\A[+-][eI]\z/) {
+    } elsif ($mode =~ /\A[+-][eI]\z/mx) {
       return $self->_send_need_more_params($client_id, 'MODE')
         unless defined $params[2] && !ref($params[2]) && length($params[2]);
       @mode_args = ($params[2]);
       $mode_line .= ' ' . $params[2];
-    } elsif ($mode =~ /\A\+k\z/) {
+    } elsif ($mode =~ /\A\+k\z/mx) {
       return $self->_send_need_more_params($client_id, 'MODE')
         unless defined $params[2] && !ref($params[2]) && length($params[2]);
       @mode_args = ($params[2]);
       $mode_line .= ' ' . $params[2];
-    } elsif ($mode =~ /\A\+l\z/) {
+    } elsif ($mode =~ /\A\+l\z/mx) {
       return $self->_send_need_more_params($client_id, 'MODE')
-        unless defined $params[2] && !ref($params[2]) && $params[2] =~ /\A[1-9][0-9]*\z/;
+        unless defined $params[2] && !ref($params[2]) && $params[2] =~ /\A[1-9][0-9]*\z/mx;
       @mode_args = ($params[2]);
       $mode_line .= ' ' . $params[2];
     }
@@ -3676,7 +3721,7 @@ sub _client_has_authoritative_delegation {
   return 0 unless ref($client->{authority_delegate_key}) eq 'Overnet::Core::Nostr::Key';
   return 0 unless defined $client->{authority_delegate_event_id}
     && !ref($client->{authority_delegate_event_id})
-    && $client->{authority_delegate_event_id} =~ /\A[0-9a-f]{64}\z/;
+    && $client->{authority_delegate_event_id} =~ /\A[0-9a-f]{64}\z/mx;
   return 0 if defined $client->{authority_delegate_expires_at}
     && $client->{authority_delegate_expires_at} < time();
   return 1;
@@ -3684,7 +3729,7 @@ sub _client_has_authoritative_delegation {
 
 sub _next_authoritative_delegate_sequence {
   my ($self, $client) = @_;
-  return undef unless ref($client) eq 'HASH';
+  return unless ref($client) eq 'HASH';
   my $sequence_key = defined($client->{id}) && !ref($client->{id}) && length($client->{id})
     ? $client->{id}
     : undef;
@@ -3855,8 +3900,8 @@ sub _apply_authoritative_channel_cache_update {
       $self->_effective_authoritative_actor_pubkey_from_event($event)
     ) || $self->{config}{server_name};
 
-    my %old_mode_flags = map { $_ => 1 } grep { /[imt]/ } split //, (($old_state->{channel_modes} || '') =~ s/^\+//r);
-    my %new_mode_flags = map { $_ => 1 } grep { /[imt]/ } split //, (($new_state->{channel_modes} || '') =~ s/^\+//r);
+    my %old_mode_flags = map { $_ => 1 } grep { /[imt]/mx } split //mx, (($old_state->{channel_modes} || '') =~ s/^\+//rmx);
+    my %new_mode_flags = map { $_ => 1 } grep { /[imt]/mx } split //mx, (($new_state->{channel_modes} || '') =~ s/^\+//rmx);
     for my $mode_letter (qw(i m t)) {
       next if $old_mode_flags{$mode_letter} && $new_mode_flags{$mode_letter};
       next unless $old_mode_flags{$mode_letter} || $new_mode_flags{$mode_letter};
@@ -4127,10 +4172,10 @@ sub _reconcile_authoritative_pending_invites_from_refresh {
 sub _userhost_entry_for_nick {
   my ($self, $nick) = @_;
   my $nick_key = $self->_nick_key($nick);
-  return undef unless defined $nick_key;
+  return unless defined $nick_key;
 
   my $client_id = $self->{nick_to_client_id}{$nick_key};
-  return undef unless defined $client_id && exists $self->{clients}{$client_id};
+  return unless defined $client_id && exists $self->{clients}{$client_id};
   my $client = $self->{clients}{$client_id};
 
   my $display_nick = $client->{nick};
@@ -4145,10 +4190,10 @@ sub _userhost_entry_for_nick {
 sub _whois_entry_for_nick {
   my ($self, $nick) = @_;
   my $nick_key = $self->_nick_key($nick);
-  return undef unless defined $nick_key;
+  return unless defined $nick_key;
 
   my $client_id = $self->{nick_to_client_id}{$nick_key};
-  return undef unless defined $client_id && exists $self->{clients}{$client_id};
+  return unless defined $client_id && exists $self->{clients}{$client_id};
   my $client = $self->{clients}{$client_id};
 
   return {
@@ -4359,9 +4404,9 @@ sub _ensure_channel_subscription {
 sub _ensure_client_dm_subscription {
   my ($self, $client_id) = @_;
   my $client = $self->{clients}{$client_id}
-    or return undef;
-  return undef unless $client->{registered};
-  return undef unless defined $client->{nick} && length($client->{nick});
+    or return;
+  return unless $client->{registered};
+  return unless defined $client->{nick} && length($client->{nick});
 
   my $object_id = $self->_dm_object_id($client->{nick});
   if (defined $client->{dm_subscription_id}
@@ -4541,13 +4586,13 @@ sub _render_subscription_item {
   my ($self, %args) = @_;
   my $item_type = $args{item_type};
   my $data = $args{data};
-  return undef unless ref($data) eq 'HASH';
+  return unless ref($data) eq 'HASH';
 
   if ($item_type eq 'private_message') {
     my $rumor = $data->{decrypted_rumor};
     if (ref($rumor) eq 'HASH') {
       my $content = $rumor->{content};
-      return undef unless ref($content) eq 'HASH';
+      return unless ref($content) eq 'HASH';
 
       return $self->_render_private_message_item(
         event_type => $data->{private_type},
@@ -4566,30 +4611,30 @@ sub _render_subscription_item {
   }
 
   my $event = Overnet::Core::Nostr->event_from_wire($data);
-  return undef unless $event;
+  return unless $event;
 
   my %tags = $self->_first_tag_values($event->tags);
   my $content = eval { JSON::decode_json($event->content) };
-  return undef unless ref($content) eq 'HASH';
+  return unless ref($content) eq 'HASH';
   my $provenance = $content->{provenance} || {};
   my $body = $content->{body} || {};
   my $event_type = $tags{overnet_et} || '';
   if (($tags{overnet_ot} || '') eq 'chat.channel') {
     my $channel = $self->_channel_name_from_object_id($tags{overnet_oid});
-    return undef unless defined $channel;
+    return unless defined $channel;
 
     my $nick = $provenance->{external_identity};
-    return undef unless defined $nick && !ref($nick) && length($nick);
+    return unless defined $nick && !ref($nick) && length($nick);
 
     my $line;
     if ($item_type eq 'event' && $event_type eq 'chat.message') {
-      return undef unless defined $body->{text} && !ref($body->{text});
+      return unless defined $body->{text} && !ref($body->{text});
       $line = sprintf(':%s PRIVMSG %s :%s', $nick, $channel, $body->{text});
     } elsif ($item_type eq 'event' && $event_type eq 'chat.notice') {
-      return undef unless defined $body->{text} && !ref($body->{text});
+      return unless defined $body->{text} && !ref($body->{text});
       $line = sprintf(':%s NOTICE %s :%s', $nick, $channel, $body->{text});
     } elsif ($item_type eq 'state' && $event_type eq 'chat.topic') {
-      return undef unless defined $body->{topic} && !ref($body->{topic});
+      return unless defined $body->{topic} && !ref($body->{topic});
       $line = sprintf(':%s TOPIC %s :%s', $nick, $channel, $body->{topic});
       $self->_channel_state($channel)->{topic_line} = $line;
       $self->_channel_state($channel)->{topic_text} = $body->{topic};
@@ -4607,7 +4652,7 @@ sub _render_subscription_item {
       $line .= ' :' . $body->{reason}
         if defined $body->{reason} && !ref($body->{reason}) && length($body->{reason});
     } else {
-      return undef;
+      return;
     }
 
     my @client_ids = grep {
@@ -4615,7 +4660,7 @@ sub _render_subscription_item {
         && $self->{clients}{$_}{registered}
         && defined $self->_client_joined_channel_name($self->{clients}{$_}, $channel)
     } sort keys %{$self->{clients}};
-    return undef unless @client_ids;
+    return unless @client_ids;
 
     return {
       channel    => $channel,
@@ -4635,16 +4680,16 @@ sub _render_subscription_item {
 
   if (($tags{overnet_ot} || '') eq 'irc.network' && $item_type eq 'event' && $event_type eq 'irc.nick') {
     my $network_object_id = 'irc:' . $self->{config}{network};
-    return undef unless ($tags{overnet_oid} || '') eq $network_object_id;
-    return undef unless defined $body->{old_nick} && !ref($body->{old_nick}) && length($body->{old_nick});
-    return undef unless defined $body->{new_nick} && !ref($body->{new_nick}) && length($body->{new_nick});
+    return unless ($tags{overnet_oid} || '') eq $network_object_id;
+    return unless defined $body->{old_nick} && !ref($body->{old_nick}) && length($body->{old_nick});
+    return unless defined $body->{new_nick} && !ref($body->{new_nick}) && length($body->{new_nick});
 
     my @client_ids = $self->_shared_client_ids_for_nick($body->{old_nick});
     $self->_rename_visible_nick_everywhere(
       old_nick => $body->{old_nick},
       new_nick => $body->{new_nick},
     );
-    return undef unless @client_ids;
+    return unless @client_ids;
 
     return {
       line       => sprintf(':%s NICK :%s', $body->{old_nick}, $body->{new_nick}),
@@ -4652,23 +4697,23 @@ sub _render_subscription_item {
     };
   }
 
-  return undef;
+  return;
 }
 
 sub _render_private_message_item {
   my ($self, %args) = @_;
   my $event_type = $args{event_type} || '';
   my $target_nick = $self->_dm_nick_from_object_id($args{object_id});
-  return undef unless defined $target_nick;
+  return unless defined $target_nick;
 
   my $provenance = $args{provenance};
-  return undef unless ref($provenance) eq 'HASH';
+  return unless ref($provenance) eq 'HASH';
   my $nick = $provenance->{external_identity};
-  return undef unless defined $nick && !ref($nick) && length($nick);
+  return unless defined $nick && !ref($nick) && length($nick);
 
   my $body = $args{body};
-  return undef unless ref($body) eq 'HASH';
-  return undef unless defined $body->{text} && !ref($body->{text});
+  return unless ref($body) eq 'HASH';
+  return unless defined $body->{text} && !ref($body->{text});
 
   my $display_target_nick = $self->_canonical_current_nick($target_nick) || $target_nick;
   my $line;
@@ -4677,18 +4722,18 @@ sub _render_private_message_item {
   } elsif ($event_type eq 'chat.dm_notice') {
     $line = sprintf(':%s NOTICE %s :%s', $nick, $display_target_nick, $body->{text});
   } else {
-    return undef;
+    return;
   }
 
   my $target_key = $self->_nick_key($target_nick);
-  return undef unless defined $target_key;
+  return unless defined $target_key;
   my @client_ids = grep {
     exists $self->{clients}{$_}
       && $self->{clients}{$_}{registered}
       && defined $self->_nick_key($self->{clients}{$_}{nick})
       && $self->_nick_key($self->{clients}{$_}{nick}) eq $target_key
   } sort keys %{$self->{clients}};
-  return undef unless @client_ids;
+  return unless @client_ids;
 
   return {
     line       => $line,
@@ -4700,13 +4745,13 @@ sub _render_opaque_private_message_item {
   my ($self, %args) = @_;
   my $event_type = $args{event_type} || '';
   my $target_nick = $self->_dm_nick_from_object_id($args{object_id});
-  return undef unless defined $target_nick;
+  return unless defined $target_nick;
 
   my $sender_identity = $args{sender_identity};
-  return undef unless defined $sender_identity && !ref($sender_identity) && length($sender_identity);
+  return unless defined $sender_identity && !ref($sender_identity) && length($sender_identity);
 
   my $transport = $args{transport};
-  return undef unless ref($transport) eq 'HASH';
+  return unless ref($transport) eq 'HASH';
 
   my $display_target_nick = $self->_canonical_current_nick($target_nick) || $target_nick;
   my $body = $self->_encode_e2ee_dm_body($transport);
@@ -4716,11 +4761,11 @@ sub _render_opaque_private_message_item {
   } elsif ($event_type eq 'chat.dm_notice') {
     $line = sprintf(':%s NOTICE %s :%s', $sender_identity, $display_target_nick, $body);
   } else {
-    return undef;
+    return;
   }
 
   my $target_key = $self->_nick_key($target_nick);
-  return undef unless defined $target_key;
+  return unless defined $target_key;
   my @client_ids = grep {
     my $client = $self->{clients}{$_};
     exists $self->{clients}{$_}
@@ -4730,7 +4775,7 @@ sub _render_opaque_private_message_item {
       && $self->_client_has_capability($client, 'overnet-e2ee')
       && defined $client->{e2ee_pubkey}
   } sort keys %{$self->{clients}};
-  return undef unless @client_ids;
+  return unless @client_ids;
 
   return {
     line       => $line,
@@ -5073,6 +5118,7 @@ sub _request {
     $restore_deferred->();
     die "Unexpected message while awaiting response for $method\n";
   }
+  return;
 }
 
 sub _read_runtime_chunk {
@@ -5136,35 +5182,35 @@ sub _parse_irc_message {
     params   => [],
   );
 
-  if ($line =~ s/\A\@(\S+)\s+//) {
+  if ($line =~ s/\A\@(\S+)\s+//mx) {
     $message{tags} = $self->_parse_irc_tags($1);
   }
 
-  if ($line =~ s/\A:([^ ]+)\s+//) {
+  if ($line =~ s/\A:([^ ]+)\s+//mx) {
     my $prefix = $1;
     $message{prefix} = $prefix;
-    if ($prefix =~ /\A([^!@]+)!([^@]+)\@(.+)\z/) {
+    if ($prefix =~ /\A([^!@]+)!([^@]+)\@(.+)\z/mx) {
       @message{qw(prefix_nick prefix_user prefix_host)} = ($1, $2, $3);
     } else {
       $message{prefix_nick} = $prefix;
     }
   }
 
-  my ($command, $rest) = split(/ /, $line, 2);
-  return undef unless defined $command && length $command;
+  my ($command, $rest) = split(/\ /mx, $line, 2);
+  return unless defined $command && length $command;
   $message{command} = uc($command);
   $rest = '' unless defined $rest;
 
   while (length $rest) {
-    $rest =~ s/\A +//;
+    $rest =~ s/\A\ +//mx;
     last unless length $rest;
 
-    if ($rest =~ s/\A:(.*)\z//) {
+    if ($rest =~ s/\A:(.*)\z//mx) {
       push @{$message{params}}, $1;
       last;
     }
 
-    if ($rest =~ s/\A([^ ]+)//) {
+    if ($rest =~ s/\A([^ ]+)//mx) {
       push @{$message{params}}, $1;
       next;
     }
@@ -5178,8 +5224,8 @@ sub _parse_irc_message {
 sub _parse_irc_tags {
   my ($self, $raw) = @_;
   my %tags;
-  for my $entry (split /;/, $raw) {
-    my ($name, $value) = split /=/, $entry, 2;
+  for my $entry (split /;/mx, $raw) {
+    my ($name, $value) = split /=/mx, $entry, 2;
     next unless defined $name && length $name;
     $tags{$name} = defined $value ? $value : '';
   }
@@ -5202,7 +5248,7 @@ sub _first_tag_values {
 sub _channel_object_id {
   my ($self, $channel) = @_;
   my $canonical = $self->_canonical_channel_name($channel);
-  return undef unless defined $canonical;
+  return unless defined $canonical;
   return 'irc:' . $self->{config}{network} . ':' . $canonical;
 }
 
@@ -5213,14 +5259,14 @@ sub _dm_object_id {
 
 sub _channel_key {
   my ($self, $channel) = @_;
-  return undef unless $self->_is_channel_name($channel);
+  return unless $self->_is_channel_name($channel);
   return $self->_irc_casefold($channel);
 }
 
 sub _canonical_channel_name {
   my ($self, $channel) = @_;
   my $key = $self->_channel_key($channel);
-  return undef unless defined $key;
+  return unless defined $key;
   return $self->{channels}{$key}{channel_name}
     if exists $self->{channels}{$key}
       && defined $self->{channels}{$key}{channel_name}
@@ -5230,16 +5276,16 @@ sub _canonical_channel_name {
 
 sub _client_joined_channel_name {
   my ($self, $client, $channel) = @_;
-  return undef unless ref($client) eq 'HASH';
+  return unless ref($client) eq 'HASH';
   my $key = $self->_channel_key($channel);
-  return undef unless defined $key;
+  return unless defined $key;
   return $client->{joined_channels}{$key};
 }
 
 sub _channel_state {
   my ($self, $channel) = @_;
   my $key = $self->_channel_key($channel);
-  return undef unless defined $key;
+  return unless defined $key;
 
   return $self->{channels}{$key} ||= {
     channel_name  => $channel,
@@ -5344,13 +5390,14 @@ sub _visible_nicks_for_channel {
   my $state = $self->{channels}{$channel_key}
     or return ();
 
-  return sort grep {
+  my @nicks = sort grep {
     defined $_ && length $_
   } map {
     $state->{visible_nicks}{$_}{display_nick}
   } grep {
     ($state->{visible_nicks}{$_}{count} || 0) > 0
   } keys %{$state->{visible_nicks} || {}};
+  return @nicks;
 }
 
 sub _send_names_list {
@@ -5435,25 +5482,25 @@ sub _send_join_bootstrap {
 
 sub _channel_name_from_object_id {
   my ($self, $object_id) = @_;
-  return undef unless defined $object_id && !ref($object_id);
+  return unless defined $object_id && !ref($object_id);
 
   my $prefix = 'irc:' . $self->{config}{network} . ':';
-  return undef unless index($object_id, $prefix) == 0;
+  return unless index($object_id, $prefix) == 0;
 
   my $channel = substr($object_id, length($prefix));
-  return undef unless $self->_is_channel_name($channel);
+  return unless $self->_is_channel_name($channel);
   return $self->_canonical_channel_name($channel);
 }
 
 sub _dm_nick_from_object_id {
   my ($self, $object_id) = @_;
-  return undef unless defined $object_id && !ref($object_id);
+  return unless defined $object_id && !ref($object_id);
 
   my $prefix = 'irc:' . $self->{config}{network} . ':dm:';
-  return undef unless index($object_id, $prefix) == 0;
+  return unless index($object_id, $prefix) == 0;
 
   my $nick = substr($object_id, length($prefix));
-  return undef unless $self->_is_nick_name($nick);
+  return unless $self->_is_nick_name($nick);
   return $nick;
 }
 
@@ -5461,7 +5508,7 @@ sub _is_channel_name {
   my ($self, $value) = @_;
   return defined $value
     && !ref($value)
-    && $value =~ /\A[#&][^\x00\x07\r\n ,:]+\z/
+    && $value =~ /\A[#&][^\x00\x07\r\n ,:]+\z/mx
       ? 1
       : 0;
 }
@@ -5470,7 +5517,7 @@ sub _is_nick_name {
   my ($self, $value) = @_;
   return defined $value
     && !ref($value)
-    && $value =~ /\A[^\x00\x07\r\n ,:#&][^\x00\x07\r\n ,:]*\z/
+    && $value =~ /\A[^\x00\x07\r\n ,:#&][^\x00\x07\r\n ,:]*\z/mx
       ? 1
       : 0;
 }
@@ -5505,7 +5552,8 @@ sub _shared_client_ids_for_channels {
     }
   }
 
-  return sort keys %client_ids;
+  my @client_ids = sort keys %client_ids;
+  return @client_ids;
 }
 
 sub _shared_client_ids_for_client {
@@ -5573,12 +5621,12 @@ sub _decorate_outbound_line_for_client {
   my ($self, $client, $line) = @_;
   return $line unless defined $line && !ref($line) && length($line);
   return $line unless ref($client) eq 'HASH';
-  return $line if $line =~ /\A:\S+\s+CAP\s/;
-  return $line if $line =~ /\AAUTHENTICATE\s/;
+  return $line if $line =~ /\A:\S+\s+CAP\s/mx;
+  return $line if $line =~ /\AAUTHENTICATE\s/mx;
 
   my @existing_tags;
-  if ($line =~ s/\A\@([^ ]+)\s+//) {
-    @existing_tags = grep { defined($_) && length($_) } split /;/, $1;
+  if ($line =~ s/\A\@([^ ]+)\s+//mx) {
+    @existing_tags = grep { defined($_) && length($_) } split /;/mx, $1;
   }
 
   my @tags;
@@ -5598,7 +5646,7 @@ sub _decorate_outbound_line_for_client {
     );
 
   my %seen = map {
-    my ($name) = split /=/, $_, 2;
+    my ($name) = split /=/mx, $_, 2;
     ($name => 1);
   } @existing_tags;
   my @merged = map { $_->[0] . '=' . $_->[1] }
@@ -5611,15 +5659,15 @@ sub _decorate_outbound_line_for_client {
 
 sub _outbound_account_tag_for_line {
   my ($self, $line) = @_;
-  return undef unless defined $line && !ref($line) && length($line);
-  return undef unless $line =~ /\A:([^ ]+)\s/;
+  return unless defined $line && !ref($line) && length($line);
+  return unless $line =~ /\A:([^ ]+)\s/mx;
 
   my $prefix = $1;
-  my ($nick) = split /[!@]/, $prefix, 2;
-  return undef unless defined $nick && !ref($nick) && length($nick);
+  my ($nick) = split /[!@]/mx, $prefix, 2;
+  return unless defined $nick && !ref($nick) && length($nick);
 
   my $sender = $self->_client_for_current_nick($nick);
-  return undef unless ref($sender) eq 'HASH';
+  return unless ref($sender) eq 'HASH';
   return $self->_client_account_name($sender);
 }
 
@@ -5686,7 +5734,7 @@ sub _is_runtime_stdin {
 
 sub _client_id_for_handle {
   my ($self, $handle) = @_;
-  return undef unless defined $handle && defined fileno($handle);
+  return unless defined $handle && defined fileno($handle);
 
   for my $client_id (keys %{$self->{clients}}) {
     my $socket = $self->{clients}{$client_id}{socket};
@@ -5694,7 +5742,7 @@ sub _client_id_for_handle {
     return $client_id if fileno($socket) == fileno($handle);
   }
 
-  return undef;
+  return;
 }
 
 sub _log {
@@ -5709,6 +5757,7 @@ sub _log {
       },
     )
   );
+  return;
 }
 
 sub _health {
@@ -5723,6 +5772,7 @@ sub _health {
       },
     )
   );
+  return;
 }
 
 sub _send_message {

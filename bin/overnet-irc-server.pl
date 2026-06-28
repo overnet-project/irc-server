@@ -14,4 +14,4 @@ my $ok = eval {
   1;
 };
 my $error = $@;
-die $error if !$ok && $error !~ /\A__shutdown__(?:\s+at\b.*)?\z/s;
+die $error if !$ok && $error !~ /\A__shutdown__(?:\s+at\b.*)?\z/smx;
