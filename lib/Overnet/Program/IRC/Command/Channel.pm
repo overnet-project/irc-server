@@ -1,7 +1,6 @@
 package Overnet::Program::IRC::Command::Channel;
 
-use strict;
-use warnings;
+use strictures 2;
 
 our $VERSION = '0.001';
 

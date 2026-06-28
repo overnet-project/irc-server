@@ -1,10 +1,9 @@
-use strict;
-use warnings;
+use strictures 2;
 
 use File::Spec;
 use File::Temp qw(tempdir);
 use FindBin;
-use JSON::PP qw(encode_json decode_json);
+use JSON ();
 use MIME::Base64 qw(decode_base64 encode_base64);
 use Socket qw(AF_UNIX PF_UNSPEC SOCK_STREAM);
 use Test::More;
@@ -80,7 +79,7 @@ subtest 'helper consumes artifacts from a daemon started from config' => sub {
   my ($payload) = $wire =~ qr{\A/quote OVERNETAUTH AUTH (\S+)\n\z};
   ok defined $payload, 'helper returns a paste-ready OVERNETAUTH AUTH line';
 
-  my $event = decode_json(decode_base64($payload));
+  my $event = JSON::decode_json(decode_base64($payload));
   is $event->{kind}, 22242, 'helper returned an auth event';
   is $event->{tags}[0][1], $scope, 'returned event preserves the IRC auth scope';
   is $event->{tags}[1][1], $challenge, 'returned event preserves the challenge';
@@ -105,7 +104,7 @@ subtest 'helper consumes artifacts from a daemon started from config' => sub {
   my ($delegate_payload) = $delegate_wire =~ qr{\A/quote OVERNETAUTH DELEGATE (\S+)\n\z};
   ok defined $delegate_payload, 'helper returns a paste-ready OVERNETAUTH DELEGATE line';
 
-  my $delegate_event = decode_json(decode_base64($delegate_payload));
+  my $delegate_event = JSON::decode_json(decode_base64($delegate_payload));
   is $delegate_event->{kind}, 14142, 'helper returned a delegate event';
   is_deeply $delegate_event->{tags}, [
     [ relay => 'ws://127.0.0.1:7448' ],
@@ -270,7 +269,7 @@ sub _write_config {
   my ($path, $socket_path) = @_;
   open my $fh, '>', $path
     or die "open $path failed: $!";
-  print {$fh} encode_json({
+  print {$fh} JSON::encode_json({
     daemon => {
       endpoint => $socket_path,
     },
@@ -311,7 +310,7 @@ sub _write_config {
 
 sub _authenticate_input_lines {
   my ($payload) = @_;
-  my $encoded = encode_base64(encode_json($payload), '');
+  my $encoded = encode_base64(JSON::encode_json($payload), '');
   my @chunks;
   while (length($encoded) > 400) {
     push @chunks, substr($encoded, 0, 400, '');
@@ -333,5 +332,5 @@ sub _decode_authenticate_output {
     grep { length }
     split /\n/, $output;
 
-  return decode_json(decode_base64($payload));
+  return JSON::decode_json(decode_base64($payload));
 }

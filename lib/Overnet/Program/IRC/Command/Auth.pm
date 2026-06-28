@@ -1,8 +1,7 @@
 package Overnet::Program::IRC::Command::Auth;
 
-use strict;
-use warnings;
-use JSON::PP ();
+use strictures 2;
+use JSON ();
 use MIME::Base64 qw(decode_base64 encode_base64);
 use Overnet::Authority::Delegation;
 use Overnet::Core::Nostr;
@@ -92,7 +91,7 @@ sub handle_authenticate {
       return 1;
     }
 
-    my $payload = encode_base64(JSON::PP::encode_json($challenge_payload), '');
+    my $payload = encode_base64(JSON::encode_json($challenge_payload), '');
     $server->_send_authenticate_payload($client_id, $payload);
     return 1;
   }
@@ -138,7 +137,7 @@ sub handle_overnetauth {
     }
 
     my $decoded = eval { decode_base64($params[1]) };
-    my $event_hash = eval { JSON::PP::decode_json($decoded) };
+    my $event_hash = eval { JSON::decode_json($decoded) };
     unless (ref($event_hash) eq 'HASH') {
       $server->_send_server_notice($client_id, 'OVERNETAUTH AUTH requires a base64-encoded event object');
       return 1;
@@ -205,7 +204,7 @@ sub handle_overnetauth {
     }
 
     my $decoded = eval { decode_base64($params[1]) };
-    my $event_hash = eval { JSON::PP::decode_json($decoded) };
+    my $event_hash = eval { JSON::decode_json($decoded) };
     unless (ref($event_hash) eq 'HASH') {
       $server->_send_server_notice($client_id, 'OVERNETAUTH DELEGATE requires a base64-encoded event object');
       return 1;
@@ -286,7 +285,7 @@ sub complete_sasl_exchange {
     or return 0;
 
   my $decoded = eval { decode_base64($client->{sasl_buffer} || '') };
-  my $payload = eval { JSON::PP::decode_json($decoded) };
+  my $payload = eval { JSON::decode_json($decoded) };
   unless (ref($payload) eq 'HASH') {
     reset_sasl_state($server, $client);
     $server->_send_sasl_fail($client_id);

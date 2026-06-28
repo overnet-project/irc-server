@@ -1,9 +1,8 @@
-use strict;
-use warnings;
+use strictures 2;
 
 use File::Spec;
 use FindBin;
-use JSON::PP qw(decode_json encode_json);
+use JSON ();
 use MIME::Base64 qw(decode_base64 encode_base64);
 use Test::More;
 
@@ -63,7 +62,7 @@ subtest 'auth mode uses the auth agent and emits a paste-ready OVERNETAUTH AUTH 
     response => {
       type   => 'response',
       id     => 'auth-1',
-      ok     => JSON::PP::true,
+      ok     => JSON::true,
       result => {
         artifacts => [
           {
@@ -88,7 +87,7 @@ subtest 'auth mode uses the auth agent and emits a paste-ready OVERNETAUTH AUTH 
 
   my ($payload) = $output =~ qr{\A/quote OVERNETAUTH AUTH (\S+)\n\z};
   ok defined $payload, 'the helper prints a paste-ready OVERNETAUTH AUTH command';
-  is_deeply decode_json(decode_base64($payload)), $event,
+  is_deeply JSON::decode_json(decode_base64($payload)), $event,
     'the helper preserves the signed auth event returned by the auth agent';
 
   is_deeply $client->calls, [
@@ -102,7 +101,7 @@ subtest 'auth mode uses the auth agent and emits a paste-ready OVERNETAUTH AUTH 
         },
         scope       => $scope,
         action      => 'session.authenticate',
-        interactive => JSON::PP::true,
+        interactive => JSON::true,
         challenge   => {
           type  => 'opaque',
           value => $challenge,
@@ -146,7 +145,7 @@ subtest 'delegate mode uses the auth agent and emits a paste-ready OVERNETAUTH D
     response => {
       type   => 'response',
       id     => 'auth-1',
-      ok     => JSON::PP::true,
+      ok     => JSON::true,
       result => {
         artifacts => [
           {
@@ -175,7 +174,7 @@ subtest 'delegate mode uses the auth agent and emits a paste-ready OVERNETAUTH D
 
   my ($payload) = $output =~ qr{\A/quote OVERNETAUTH DELEGATE (\S+)\n\z};
   ok defined $payload, 'the helper prints a paste-ready OVERNETAUTH DELEGATE command';
-  is_deeply decode_json(decode_base64($payload)), $event,
+  is_deeply JSON::decode_json(decode_base64($payload)), $event,
     'the helper preserves the signed delegate event returned by the auth agent';
 
   is_deeply $client->calls, [
@@ -189,7 +188,7 @@ subtest 'delegate mode uses the auth agent and emits a paste-ready OVERNETAUTH D
         },
         scope       => $scope,
         action      => 'session.delegate',
-        interactive => JSON::PP::true,
+        interactive => JSON::true,
         artifacts   => [
           {
             type => 'nostr.event',
@@ -218,7 +217,7 @@ subtest 'bridge mode parses OVERNETAUTH CHALLENGE lines and requests auth artifa
     response => {
       type   => 'response',
       id     => 'auth-1',
-      ok     => JSON::PP::true,
+      ok     => JSON::true,
       result => {
         artifacts => [
           {
@@ -265,7 +264,7 @@ subtest 'bridge mode parses OVERNETAUTH DELEGATE lines and requests delegate art
     response => {
       type   => 'response',
       id     => 'auth-1',
-      ok     => JSON::PP::true,
+      ok     => JSON::true,
       result => {
         artifacts => [
           {
@@ -322,7 +321,7 @@ subtest 'bridge mode processes a continuous stdin stream and emits quote command
       {
         type   => 'response',
         id     => 'auth-1',
-        ok     => JSON::PP::true,
+        ok     => JSON::true,
         result => {
           artifacts => [
             {
@@ -347,7 +346,7 @@ subtest 'bridge mode processes a continuous stdin stream and emits quote command
       {
         type   => 'response',
         id     => 'auth-2',
-        ok     => JSON::PP::true,
+        ok     => JSON::true,
         result => {
           artifacts => [
             {
@@ -408,7 +407,7 @@ subtest 'bridge mode returns zero for streams with no matching auth lines' => su
     response => {
       type   => 'response',
       id     => 'auth-1',
-      ok     => JSON::PP::true,
+      ok     => JSON::true,
       result => { artifacts => [] },
     },
   );
@@ -441,7 +440,7 @@ subtest 'bridge mode stream can emit payloads without /quote prefixes' => sub {
     response => {
       type   => 'response',
       id     => 'auth-1',
-      ok     => JSON::PP::true,
+      ok     => JSON::true,
       result => {
         artifacts => [
           {
@@ -507,7 +506,7 @@ subtest 'bridge mode processes SASL NOSTR AUTHENTICATE streams without relay del
     response => {
       type   => 'response',
       id     => 'auth-1',
-      ok     => JSON::PP::true,
+      ok     => JSON::true,
       result => {
         artifacts => [
           {
@@ -558,7 +557,7 @@ subtest 'bridge mode processes SASL NOSTR AUTHENTICATE streams without relay del
         },
         scope       => $scope,
         action      => 'session.authenticate',
-        interactive => JSON::PP::true,
+        interactive => JSON::true,
         challenge   => {
           type  => 'opaque',
           value => $challenge,
@@ -616,7 +615,7 @@ subtest 'bridge mode processes relay-backed SASL NOSTR AUTHENTICATE streams' => 
       {
         type   => 'response',
         id     => 'auth-1',
-        ok     => JSON::PP::true,
+        ok     => JSON::true,
         result => {
           artifacts => [
             {
@@ -630,7 +629,7 @@ subtest 'bridge mode processes relay-backed SASL NOSTR AUTHENTICATE streams' => 
       {
         type   => 'response',
         id     => 'auth-2',
-        ok     => JSON::PP::true,
+        ok     => JSON::true,
         result => {
           artifacts => [
             {
@@ -706,7 +705,7 @@ subtest 'auth mode forwards locator and service identity descriptors to the auth
     response => {
       type   => 'response',
       id     => 'auth-1',
-      ok     => JSON::PP::true,
+      ok     => JSON::true,
       result => {
         artifacts => [
           {
@@ -759,7 +758,7 @@ subtest 'service identity flags require both scheme and value' => sub {
     response => {
       type   => 'response',
       id     => 'auth-1',
-      ok     => JSON::PP::true,
+      ok     => JSON::true,
       result => {
         artifacts => [
           {
@@ -799,7 +798,7 @@ subtest 'service identity flags require both scheme and value' => sub {
 
 sub _authenticate_input_lines {
   my ($payload) = @_;
-  my $encoded = encode_base64(encode_json($payload), '');
+  my $encoded = encode_base64(JSON::encode_json($payload), '');
   my @chunks;
   while (length($encoded) > 400) {
     push @chunks, substr($encoded, 0, 400, '');
@@ -821,7 +820,7 @@ sub _decode_authenticate_output {
     grep { length }
     split /\n/, $output;
 
-  return decode_json(decode_base64($payload));
+  return JSON::decode_json(decode_base64($payload));
 }
 
 done_testing;

@@ -1,5 +1,4 @@
-use strict;
-use warnings;
+use strictures 2;
 
 use Cwd qw(getcwd);
 use File::Spec;
@@ -20,14 +19,24 @@ is $args->{ABSTRACT}, 'The Overnet IRC server program, implemented in Perl', 'ab
 is $args->{VERSION_FROM}, 'lib/Overnet/Program/IRC/Server.pm', 'version comes from server module';
 is $args->{LICENSE}, 'gpl_3', 'license';
 is $args->{MIN_PERL_VERSION}, '5.024', 'minimum Perl version';
+is_deeply(
+  $args->{CONFIGURE_REQUIRES},
+  {
+    'ExtUtils::MakeMaker' => 0,
+    'strictures'         => 2,
+  },
+  'configure prerequisites include modules required to load Makefile.PL',
+);
 
 is_deeply(
   $args->{PREREQ_PM},
   {
     'IO::Socket::SSL' => 0,
+    'JSON'           => 0,
     'Net::Nostr'      => 0,
     'Overnet'         => 0.001,
     'Overnet::Relay'  => 0.001,
+    'strictures'      => 2,
   },
   'runtime prerequisites stay on top-level non-core distributions',
 );

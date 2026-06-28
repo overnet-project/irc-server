@@ -1,9 +1,8 @@
 package Overnet::Program::IRC::Auth::Helper;
 
-use strict;
-use warnings;
+use strictures 2;
 
-use JSON::PP ();
+use JSON ();
 use MIME::Base64 qw(decode_base64 encode_base64);
 use Overnet::Auth::Bridge::IRC;
 use Overnet::Program::IRC::Renderer ();
@@ -247,8 +246,8 @@ sub _authorize_artifact {
     scope        => $scope,
     action       => $args{action},
     interactive  => $args{interactive}
-      ? JSON::PP::true
-      : JSON::PP::false,
+      ? JSON::true
+      : JSON::false,
     (ref($args{challenge}) eq 'HASH' ? (challenge => $args{challenge}) : ()),
     artifacts    => $args{artifacts},
   );
@@ -329,7 +328,7 @@ sub _flush_sasl_chunk_state {
   return ()
     unless defined $decoded;
 
-  my $challenge_payload = eval { JSON::PP::decode_json($decoded) };
+  my $challenge_payload = eval { JSON::decode_json($decoded) };
   return ()
     unless ref($challenge_payload) eq 'HASH';
 
@@ -378,7 +377,7 @@ sub _render_sasl_response {
     )->{value};
   }
 
-  my $payload = encode_base64(JSON::PP::encode_json(\%response), '');
+  my $payload = encode_base64(JSON::encode_json(\%response), '');
   my $lines = Overnet::Program::IRC::Renderer::authenticate_payload_lines(
     payload => $payload,
   );

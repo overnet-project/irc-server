@@ -1,5 +1,4 @@
-use strict;
-use warnings;
+use strictures 2;
 
 use ExtUtils::MakeMaker;
 
@@ -11,11 +10,17 @@ WriteMakefile(
   VERSION_FROM     => 'lib/Overnet/Program/IRC/Server.pm',
   LICENSE          => 'gpl_3',
   MIN_PERL_VERSION => '5.024',
+  CONFIGURE_REQUIRES => {
+    'ExtUtils::MakeMaker' => 0,
+    'strictures'         => 2,
+  },
   PREREQ_PM        => {
     'IO::Socket::SSL' => 0,
+    'JSON'           => 0,
     'Net::Nostr'      => 0,
     'Overnet'         => 0.001,
     'Overnet::Relay'  => 0.001,
+    'strictures'      => 2,
   },
   EXE_FILES        => [
     'bin/overnet-irc-auth.pl',

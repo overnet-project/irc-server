@@ -1,7 +1,6 @@
 package Overnet::Program::IRC::Renderer;
 
-use strict;
-use warnings;
+use strictures 2;
 
 our $VERSION = '0.001';
 

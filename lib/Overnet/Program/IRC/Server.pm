@@ -1,14 +1,13 @@
 package Overnet::Program::IRC::Server;
 
-use strict;
-use warnings;
+use strictures 2;
 use Digest::SHA qw(sha256_hex);
 use Encode qw(encode);
 use IO::Handle;
 use IO::Select;
 use IO::Socket::INET;
 use IO::Socket::SSL ();
-use JSON::PP ();
+use JSON ();
 use MIME::Base64 qw(decode_base64 encode_base64);
 use Overnet::Authority::HostedChannel;
 use Overnet::Core::Nostr;
@@ -4570,7 +4569,7 @@ sub _render_subscription_item {
   return undef unless $event;
 
   my %tags = $self->_first_tag_values($event->tags);
-  my $content = eval { JSON::PP::decode_json($event->content) };
+  my $content = eval { JSON::decode_json($event->content) };
   return undef unless ref($content) eq 'HASH';
   my $provenance = $content->{provenance} || {};
   my $body = $content->{body} || {};
@@ -4755,7 +4754,7 @@ sub _decode_e2ee_dm_body {
     return (undef, 'Malformed overnet-e2ee body: base64 decode failed', 1);
   }
 
-  my $transport = eval { JSON::PP::decode_json($decoded) };
+  my $transport = eval { JSON::decode_json($decoded) };
   if ($@ || ref($transport) ne 'HASH') {
     return (undef, 'Malformed overnet-e2ee body: transport JSON is invalid', 1);
   }
@@ -4768,7 +4767,7 @@ sub _encode_e2ee_dm_body {
   die "transport must be an object\n"
     unless ref($transport) eq 'HASH';
 
-  return $E2EE_DM_BODY_PREFIX . encode_base64(JSON::PP::encode_json($transport), '');
+  return $E2EE_DM_BODY_PREFIX . encode_base64(JSON::encode_json($transport), '');
 }
 
 sub _emit_mapped_result {
@@ -4851,7 +4850,7 @@ sub _emit_private_message_candidate {
   die "Encrypted private-message candidate must be chat.dm_message or chat.dm_notice\n"
     unless $private_type eq 'chat.dm_message' || $private_type eq 'chat.dm_notice';
 
-  my $content = eval { JSON::PP::decode_json($candidate->{content}) };
+  my $content = eval { JSON::decode_json($candidate->{content}) };
   die "Encrypted private-message candidate content must decode to an object\n"
     unless ref($content) eq 'HASH';
 

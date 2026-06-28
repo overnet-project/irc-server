@@ -1,6 +1,5 @@
 #!/usr/bin/env perl
-use strict;
-use warnings;
+use strictures 2;
 use FindBin;
 use lib grep { -d $_ } (
   "$FindBin::Bin/../lib",

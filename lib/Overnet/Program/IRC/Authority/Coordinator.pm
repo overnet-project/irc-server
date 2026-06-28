@@ -1,7 +1,6 @@
 package Overnet::Program::IRC::Authority::Coordinator;
 
-use strict;
-use warnings;
+use strictures 2;
 
 use constant MAX_RENDERED_SUBSCRIPTION_EVENT_IDS => 4096;
 use Overnet::Authority::HostedChannel;

@@ -1,6 +1,5 @@
 #!/usr/bin/env perl
-use strict;
-use warnings;
+use strictures 2;
 
 use Cwd qw(abs_path);
 use File::Basename qw(dirname);
@@ -8,7 +7,7 @@ use File::Path qw(make_path);
 use File::Spec;
 use FindBin;
 use Getopt::Long qw(GetOptions);
-use JSON::PP ();
+use JSON ();
 use lib grep { -d $_ } (
   "$FindBin::Bin/../lib",
   "$FindBin::Bin/../../core-perl/lib",
@@ -337,7 +336,7 @@ sub _write_health_file {
   my $tmp_path = $path . '.tmp.' . $$;
   open my $fh, '>', $tmp_path
     or die "Can't open IRC service health temp file $tmp_path: $!";
-  print {$fh} JSON::PP->new->utf8->canonical->encode($payload)
+  print {$fh} JSON->new->utf8->canonical->encode($payload)
     or die "Can't write IRC service health temp file $tmp_path: $!";
   close $fh
     or die "Can't close IRC service health temp file $tmp_path: $!";
