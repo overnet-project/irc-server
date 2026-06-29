@@ -3,12 +3,13 @@ use strictures 2;
 use File::Spec;
 use File::Temp qw(tempdir);
 use FindBin;
-use JSON ();
+use JSON         ();
 use MIME::Base64 qw(decode_base64 encode_base64);
-use Socket qw(AF_UNIX PF_UNSPEC SOCK_STREAM);
-use Test::More;
+use Socket       qw(AF_UNIX PF_UNSPEC SOCK_STREAM);
+use Test2::V0;
 
 use lib grep { -d $_ } (
+  File::Spec->catdir($FindBin::Bin, 'lib'),
   File::Spec->catdir($FindBin::Bin, '..', 'lib'),
   File::Spec->catdir($FindBin::Bin, '..', '..', 'core-perl', 'lib'),
 );
@@ -16,33 +17,14 @@ use lib grep { -d $_ } (
 use Overnet::Auth::Client;
 use Overnet::Auth::Daemon;
 use Overnet::Program::IRC::Auth::Helper;
+use t::irc_auth_daemon_e2e::FakeListener;
 
 my $fixture_secret = '1111111111111111111111111111111111111111111111111111111111111111';
-my $challenge = '6cf8a952df516a8e691c6138496516abe84ccfefa9678f518bb52f70b1ca966f';
-my $scope = 'irc://irc.example.test/overnet';
-
-{
-  package t::irc_auth_daemon_e2e::FakeListener; ## no critic (Modules::RequireFilenameMatchesPackage)
-
-  sub new {
-    my ($class, %args) = @_;
-    return bless {
-      queue => $args{queue} || [],
-    }, $class;
-  }
-
-  sub accept {
-    my ($self) = @_;
-    return shift @{$self->{queue}};
-  }
-
-  sub close {
-    return 1;
-  }
-}
+my $challenge      = '6cf8a952df516a8e691c6138496516abe84ccfefa9678f518bb52f70b1ca966f';
+my $scope          = 'irc://irc.example.test/overnet';
 
 subtest 'helper consumes artifacts from a daemon started from config' => sub {
-  my $dir = tempdir(CLEANUP => 1, DIR => File::Spec->catdir($FindBin::Bin, '..'));
+  my $dir         = tempdir(CLEANUP => 1, DIR => File::Spec->catdir($FindBin::Bin, '..'));
   my $config_file = File::Spec->catfile($dir, 'auth-agent.json');
   my $socket_path = File::Spec->catfile($dir, 'auth.sock');
 
@@ -58,9 +40,8 @@ subtest 'helper consumes artifacts from a daemon started from config' => sub {
     socket_factory => $next_socket,
   );
   my $identities = $client->identities_list;
-  is $identities->{ok}, 1, 'identities.list succeeds against the daemon';
-  is $identities->{result}{identities}[0]{identity_id}, 'default',
-    'daemon loaded the configured identity';
+  is $identities->{ok},                                 1,         'identities.list succeeds against the daemon';
+  is $identities->{result}{identities}[0]{identity_id}, 'default', 'daemon loaded the configured identity';
 
   my $helper_client = Overnet::Auth::Client->new(
     endpoint       => $socket_path,
@@ -80,8 +61,8 @@ subtest 'helper consumes artifacts from a daemon started from config' => sub {
   ok defined $payload, 'helper returns a paste-ready OVERNETAUTH AUTH line';
 
   my $event = JSON::decode_json(decode_base64($payload));
-  is $event->{kind}, 22242, 'helper returned an auth event';
-  is $event->{tags}[0][1], $scope, 'returned event preserves the IRC auth scope';
+  is $event->{kind},       22242,      'helper returned an auth event';
+  is $event->{tags}[0][1], $scope,     'returned event preserves the IRC auth scope';
   is $event->{tags}[1][1], $challenge, 'returned event preserves the challenge';
 
   my $delegate_client = Overnet::Auth::Client->new(
@@ -89,16 +70,16 @@ subtest 'helper consumes artifacts from a daemon started from config' => sub {
     socket_factory => $next_socket,
   );
   my $delegate_wire = Overnet::Program::IRC::Auth::Helper->run(
-    client           => $delegate_client,
-    command          => 'delegate',
-    identity_id      => 'default',
-    relay_url        => 'ws://127.0.0.1:7448',
-    scope            => $scope,
-    delegate_pubkey  => ('f' x 64),
-    session_id       => 'session-123',
-    expires_at       => '1744304600',
-    interactive      => 1,
-    quote            => 1,
+    client          => $delegate_client,
+    command         => 'delegate',
+    identity_id     => 'default',
+    relay_url       => 'ws://127.0.0.1:7448',
+    scope           => $scope,
+    delegate_pubkey => ('f' x 64),
+    session_id      => 'session-123',
+    expires_at      => '1744304600',
+    interactive     => 1,
+    quote           => 1,
   );
 
   my ($delegate_payload) = $delegate_wire =~ qr{\A/quote\ OVERNETAUTH\ DELEGATE\ (\S+)\n\z}mx;
@@ -106,19 +87,21 @@ subtest 'helper consumes artifacts from a daemon started from config' => sub {
 
   my $delegate_event = JSON::decode_json(decode_base64($delegate_payload));
   is $delegate_event->{kind}, 14142, 'helper returned a delegate event';
-  is_deeply $delegate_event->{tags}, [
-    [ relay => 'ws://127.0.0.1:7448' ],
-    [ server => $scope ],
-    [ delegate => ('f' x 64) ],
-    [ session => 'session-123' ],
-    [ expires_at => '1744304600' ],
-  ], 'returned delegate event preserves the expected tags';
+  is $delegate_event->{tags},
+    [
+    [relay      => 'ws://127.0.0.1:7448'],
+    [server     => $scope],
+    [delegate   => ('f' x 64)],
+    [session    => 'session-123'],
+    [expires_at => '1744304600'],
+    ],
+    'returned delegate event preserves the expected tags';
 
   _wait_for_child($pid, 'daemon exits cleanly after the end-to-end flow');
 };
 
 subtest 'helper bridge mode consumes a continuous stream against the daemon' => sub {
-  my $dir = tempdir(CLEANUP => 1, DIR => File::Spec->catdir($FindBin::Bin, '..'));
+  my $dir         = tempdir(CLEANUP => 1, DIR => File::Spec->catdir($FindBin::Bin, '..'));
   my $config_file = File::Spec->catfile($dir, 'auth-agent.json');
   my $socket_path = File::Spec->catfile($dir, 'auth.sock');
 
@@ -136,9 +119,10 @@ subtest 'helper bridge mode consumes a continuous stream against the daemon' => 
   my $input = join '',
     ":server 001 alice :welcome\r\n",
     "-server- OVERNETAUTH CHALLENGE $challenge\r\n",
-    "-server- OVERNETAUTH DELEGATE ", ('f' x 64), " session-123 ws://127.0.0.1:7448 1744304600\r\n";
+    "-server- OVERNETAUTH DELEGATE ", ('f' x 64),
+    " session-123 ws://127.0.0.1:7448 1744304600\r\n";
   my $output = '';
-  open my $in, '<', \$input or die "open input failed: $!";
+  open my $in,  '<', \$input  or die "open input failed: $!";
   open my $out, '>', \$output or die "open output failed: $!";
 
   my $count = Overnet::Program::IRC::Auth::Helper->run(
@@ -153,14 +137,15 @@ subtest 'helper bridge mode consumes a continuous stream against the daemon' => 
 
   close $out or die "close output failed: $!";
   is $count, 2, 'bridge stream emitted two auth commands';
-  like $output, qr{\A/quote\ OVERNETAUTH\ AUTH\ \S+\n/quote\ OVERNETAUTH\ DELEGATE\ \S+\n\z}mx,
+  like $output,
+    qr{\A/quote\ OVERNETAUTH\ AUTH\ \S+\n/quote\ OVERNETAUTH\ DELEGATE\ \S+\n\z}mx,
     'bridge stream produced both auth commands from the daemon-backed flow';
 
   _wait_for_child($pid, 'daemon exits cleanly after the bridge stream flow');
 };
 
 subtest 'helper bridge mode answers SASL NOSTR AUTHENTICATE challenge streams against the daemon' => sub {
-  my $dir = tempdir(CLEANUP => 1, DIR => File::Spec->catdir($FindBin::Bin, '..'));
+  my $dir         = tempdir(CLEANUP => 1, DIR => File::Spec->catdir($FindBin::Bin, '..'));
   my $config_file = File::Spec->catfile($dir, 'auth-agent.json');
   my $socket_path = File::Spec->catfile($dir, 'auth.sock');
 
@@ -175,18 +160,20 @@ subtest 'helper bridge mode answers SASL NOSTR AUTHENTICATE challenge streams ag
     endpoint       => $socket_path,
     socket_factory => $next_socket,
   );
-  my $input = _authenticate_input_lines({
-    challenge        => $challenge,
-    scope            => $scope,
-    relay_url        => 'ws://127.0.0.1:7448',
-    grant_kind       => 14142,
-    delegate_pubkey  => ('f' x 64),
-    session_id       => 'session-123',
-    expires_at       => '1744304600',
-    padding          => ('x' x 700),
-  });
+  my $input = _authenticate_input_lines(
+    {
+      challenge       => $challenge,
+      scope           => $scope,
+      relay_url       => 'ws://127.0.0.1:7448',
+      grant_kind      => 14142,
+      delegate_pubkey => ('f' x 64),
+      session_id      => 'session-123',
+      expires_at      => '1744304600',
+      padding         => ('x' x 700),
+    }
+  );
   my $output = '';
-  open my $in, '<', \$input or die "open input failed: $!";
+  open my $in,  '<', \$input  or die "open input failed: $!";
   open my $out, '>', \$output or die "open output failed: $!";
 
   my $count = Overnet::Program::IRC::Auth::Helper->run(
@@ -199,24 +186,25 @@ subtest 'helper bridge mode answers SASL NOSTR AUTHENTICATE challenge streams ag
   );
 
   close $out or die "close output failed: $!";
-  my @lines = grep { length } split /\n/mx, $output;
+  my @lines = grep {length} split /\n/mx, $output;
   ok @lines >= 1, 'sasl bridge emitted AUTHENTICATE commands';
   is $count, scalar(@lines), 'sasl bridge count matches emitted AUTHENTICATE commands';
-  like $lines[0], qr{\A/quote\ AUTHENTICATE\ \S+\z}mx,
-    'sasl bridge emits IRC AUTHENTICATE commands';
+  like $lines[0], qr{\A/quote\ AUTHENTICATE\ \S+\z}mx, 'sasl bridge emits IRC AUTHENTICATE commands';
 
   my $response = _decode_authenticate_output($output);
-  is $response->{auth_event}{kind}, 22242, 'sasl bridge returned an auth event';
-  is $response->{delegate_event}{kind}, 14142, 'sasl bridge returned a delegate event';
-  is $response->{auth_event}{tags}[0][1], $scope, 'sasl auth event preserves the scope';
+  is $response->{auth_event}{kind},       22242,      'sasl bridge returned an auth event';
+  is $response->{delegate_event}{kind},   14142,      'sasl bridge returned a delegate event';
+  is $response->{auth_event}{tags}[0][1], $scope,     'sasl auth event preserves the scope';
   is $response->{auth_event}{tags}[1][1], $challenge, 'sasl auth event preserves the challenge';
-  is_deeply $response->{delegate_event}{tags}, [
-    [ relay => 'ws://127.0.0.1:7448' ],
-    [ server => $scope ],
-    [ delegate => ('f' x 64) ],
-    [ session => 'session-123' ],
-    [ expires_at => '1744304600' ],
-  ], 'sasl delegate event preserves the server challenge parameters';
+  is $response->{delegate_event}{tags},
+    [
+    [relay      => 'ws://127.0.0.1:7448'],
+    [server     => $scope],
+    [delegate   => ('f' x 64)],
+    [session    => 'session-123'],
+    [expires_at => '1744304600'],
+    ],
+    'sasl delegate event preserves the server challenge parameters';
 
   _wait_for_child($pid, 'daemon exits cleanly after the sasl bridge flow');
 };
@@ -230,8 +218,7 @@ sub _start_daemon_from_config {
   my $endpoint = $args{endpoint};
 
   for (1 .. ($args{max_connections} || 1)) {
-    socketpair(my $server_socket, my $client_socket, AF_UNIX, SOCK_STREAM, PF_UNSPEC)
-      or die "socketpair failed: $!";
+    socketpair(my $server_socket, my $client_socket, AF_UNIX, SOCK_STREAM, PF_UNSPEC) or die "socketpair failed: $!";
     push @server_sockets, $server_socket;
     push @client_sockets, $client_socket;
   }
@@ -240,7 +227,7 @@ sub _start_daemon_from_config {
   die "fork failed: $!" unless defined $pid;
   if (!$pid) {
     my $listener = t::irc_auth_daemon_e2e::FakeListener->new(queue => \@server_sockets);
-    my $daemon = Overnet::Auth::Daemon->new(
+    my $daemon   = Overnet::Auth::Daemon->new(
       config_file     => $args{config_file},
       endpoint        => $endpoint,
       max_connections => $args{max_connections},
@@ -270,41 +257,42 @@ sub _write_config {
   my ($path, $socket_path) = @_;
   open my $fh, '>', $path
     or die "open $path failed: $!";
-  print {$fh} JSON::encode_json({
-    daemon => {
-      endpoint => $socket_path,
-    },
-    identities => [
-      {
-        identity_id  => 'default',
-        backend_type => 'direct_secret',
-        backend_config => {
-          secret => $fixture_secret,
+  print {$fh} JSON::encode_json(
+    {
+      daemon => {
+        endpoint => $socket_path,
+      },
+      identities => [
+        {
+          identity_id    => 'default',
+          backend_type   => 'direct_secret',
+          backend_config => {
+            secret => $fixture_secret,
+          },
+          public_identity => {
+            scheme => 'nostr.pubkey',
+            value  => '4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa',
+          },
         },
-        public_identity => {
-          scheme => 'nostr.pubkey',
-          value  => '4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa',
+      ],
+      policies => [
+        {
+          identity_id => 'default',
+          program_id  => 'irc.bridge',
+          locator     => $scope,
+          scope       => $scope,
+          action      => 'session.authenticate',
         },
-      },
-    ],
-    policies => [
-      {
-        identity_id => 'default',
-        program_id  => 'irc.bridge',
-        locator     => $scope,
-        scope       => $scope,
-        action      => 'session.authenticate',
-      },
-      {
-        identity_id => 'default',
-        program_id  => 'irc.bridge',
-        locator     => $scope,
-        scope       => $scope,
-        action      => 'session.delegate',
-      },
-    ],
-  })
-    or die "write $path failed: $!";
+        {
+          identity_id => 'default',
+          program_id  => 'irc.bridge',
+          locator     => $scope,
+          scope       => $scope,
+          action      => 'session.delegate',
+        },
+      ],
+    }
+  ) or die "write $path failed: $!";
   close $fh
     or die "close $path failed: $!";
   return;
@@ -319,19 +307,18 @@ sub _authenticate_input_lines {
   }
   push @chunks, $encoded if length $encoded;
 
-  return join '', map { ":server AUTHENTICATE $_\r\n" } @chunks;
+  return join '', map {":server AUTHENTICATE $_\r\n"} @chunks;
 }
 
 sub _decode_authenticate_output {
   my ($output) = @_;
-  my $payload = join '',
-    map {
-      my $line = $_;
-      $line =~ s/\A\/quote\s+//mx;
-      $line =~ s/\AAUTHENTICATE\s+//mx;
-      $line eq '+' ? () : $line;
+  my $payload  = join '', map {
+    my $line = $_;
+    $line =~ s/\A\/quote\s+//mx;
+    $line =~ s/\AAUTHENTICATE\s+//mx;
+    $line eq '+' ? () : $line;
     }
-    grep { length }
+    grep {length}
     split /\n/mx, $output;
 
   return JSON::decode_json(decode_base64($payload));

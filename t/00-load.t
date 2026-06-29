@@ -1,11 +1,23 @@
 use strictures 2;
 
-use Test::More;
+use Test2::V0;
 
-use_ok 'Overnet::Program::IRC::Authority::Coordinator';
-use_ok 'Overnet::Program::IRC::Command::Auth';
-use_ok 'Overnet::Program::IRC::Command::Channel';
-use_ok 'Overnet::Program::IRC::Renderer';
-use_ok 'Overnet::Program::IRC::Server';
+for my $module (
+  qw(
+  Overnet::Program::IRC::Authority::Coordinator
+  Overnet::Program::IRC::Command::Auth
+  Overnet::Program::IRC::Command::Channel
+  Overnet::Program::IRC::Renderer
+  Overnet::Program::IRC::Server
+  )
+) {
+  my $path = $module =~ s{::}{/}gr . '.pm';
+  my $ok   = eval {
+    require $path;
+    1;
+  };
+  ok $ok, "$module loads"
+    or diag $@;
+}
 
 done_testing;

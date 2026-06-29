@@ -1,6 +1,6 @@
 use strictures 2;
 
-use Test::More;
+use Test2::V0;
 
 use Overnet::Program::IRC::Server;
 
@@ -26,9 +26,7 @@ sysread($reader, $payload, 1024);
 
 is(
   unpack('H*', $payload),
-  unpack('H*', ":seven3 PRIVMSG #overnet :hello kestrel ")
-    . 'f09f9c82'
-    . unpack('H*', "\r\n"),
+  unpack('H*', ":seven3 PRIVMSG #overnet :hello kestrel ") . 'f09f9c82' . unpack('H*', "\r\n"),
   'IRC line is encoded as UTF-8 bytes before syswrite',
 );
 

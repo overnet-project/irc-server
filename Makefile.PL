@@ -9,7 +9,7 @@ WriteMakefile(
   ABSTRACT         => 'The Overnet IRC server program, implemented in Perl',
   VERSION_FROM     => 'lib/Overnet/Program/IRC/Server.pm',
   LICENSE          => 'gpl_3',
-  MIN_PERL_VERSION => '5.024',
+  MIN_PERL_VERSION => '5.040',
   CONFIGURE_REQUIRES => {
     'ExtUtils::MakeMaker' => 0,
     'strictures'         => 2,
