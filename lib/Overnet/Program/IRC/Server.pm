@@ -7484,7 +7484,11 @@ sub _send_message {
   while ($offset < length $frame) {
     my $written = syswrite(STDOUT, $frame, length($frame) - $offset, $offset);
     if (!(defined $written)) {
+      next if $OS_ERROR{EINTR};
       croak "failed to write runtime protocol frame: $OS_ERROR\n";
+    }
+    if ($written == 0) {
+      croak "failed to write runtime protocol frame: wrote zero bytes\n";
     }
 
     $offset += $written;

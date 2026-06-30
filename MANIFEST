@@ -23,7 +23,6 @@ lib/Overnet/Program/IRC/Server.pm
 LICENSE
 Makefile.PL
 MANIFEST			This list of files
-MANIFEST.bak
 MANIFEST.SKIP
 README.md
 t/00-load.t
@@ -34,3 +33,4 @@ t/irc-auth-helper.t
 t/makemaker-metadata.t
 t/manifest-skip-policy.t
 t/readme-auth.t
+t/write-failures.t

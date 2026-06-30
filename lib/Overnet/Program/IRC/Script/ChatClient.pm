@@ -448,7 +448,11 @@ sub _send_line {
   while ($offset < length $payload) {
     my $written = syswrite($self->{socket}, $payload, length($payload) - $offset, $offset);
     if (!defined $written) {
+      next if $OS_ERROR{EINTR};
       croak "Failed to write IRC line: $OS_ERROR\n";
+    }
+    if ($written == 0) {
+      croak "Failed to write IRC line: wrote zero bytes\n";
     }
     $offset += $written;
   }

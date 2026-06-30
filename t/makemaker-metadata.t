@@ -78,6 +78,7 @@ is(
         t/makemaker-metadata.t
         t/manifest-skip-policy.t
         t/readme-auth.t
+        t/write-failures.t
       )
     ),
   },
