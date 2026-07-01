@@ -7,12 +7,11 @@ use Test2::V0;
 use Overnet::Program::IRC::Authority::Coordinator;
 use TestSubscriptionServer;
 
-my $server = bless {
+my $server = TestSubscriptionServer->new(
   suppress_subscription_event_ids => {},
   rendered_subscription_event_ids => {},
   sent_lines                      => [],
-  },
-  'TestSubscriptionServer';
+);
 
 my $event = {
   id      => 'a' x 64,
@@ -45,15 +44,14 @@ is(
 
 is($server->{sent_lines}, [[1, ':seven3 PRIVMSG #overnet :Hello']], 'duplicate event produced no second client line',);
 
-my $origin_server = bless {
+my $origin_server = TestSubscriptionServer->new(
   suppress_subscription_event_ids      => {},
   subscription_event_origin_client_ids => {('b' x 64) => 1},
   rendered_subscription_event_ids      => {},
   rendered_subscription_event_id_order => [],
   render_client_ids                    => [1, 2],
   sent_lines                           => [],
-  },
-  'TestSubscriptionServer';
+);
 
 is(
   Overnet::Program::IRC::Authority::Coordinator::handle_subscription_event(

@@ -1,11 +1,15 @@
 package t::irc_auth_daemon_e2e::FakeListener;
 
 use strictures 2;
+use Moo;
 
-sub new {
-  my ($class, %args) = @_;
-  return bless {queue => $args{queue} || [],}, $class;
-}
+has queue => (
+  is      => 'ro',
+  reader  => '_queue',
+  default => sub { [] },
+);
+
+no Moo;
 
 sub accept {
   my ($self) = @_;

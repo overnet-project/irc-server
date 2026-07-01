@@ -1,15 +1,23 @@
 package t::irc_auth_helper::FakeClient;
 
 use strictures 2;
+use Moo;
 
-sub new {
-  my ($class, %args) = @_;
-  return bless {
-    response  => $args{response},
-    responses => $args{responses},
-    calls     => [],
-  }, $class;
-}
+has response => (
+  is     => 'ro',
+  reader => '_response',
+);
+has responses => (
+  is     => 'ro',
+  reader => '_responses',
+);
+has calls => (
+  is      => 'ro',
+  reader  => '_calls',
+  default => sub { [] },
+);
+
+no Moo;
 
 sub sessions_authorize {
   my ($self, %params) = @_;

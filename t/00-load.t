@@ -20,4 +20,7 @@ for my $module (
     or diag $@;
 }
 
+my $server = Overnet::Program::IRC::Server->new({});
+isa_ok $server, ['Overnet::Program::IRC::Server'], 'hashref constructor';
+
 done_testing;

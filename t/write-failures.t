@@ -7,7 +7,7 @@ use Overnet::Program::IRC::Server;
 
 subtest 'chat client write loop rejects zero-byte syswrite' => sub {
   tie *CHAT_ZERO_WRITE, 't::ZeroWriteHandle';
-  my $client = bless {socket => \*CHAT_ZERO_WRITE}, 'Overnet::Program::IRC::Script::ChatClient';
+  my $client = Overnet::Program::IRC::Script::ChatClient->new(socket => \*CHAT_ZERO_WRITE);
 
   my $error = dies { $client->_send_line('PING :server') };
 
@@ -44,9 +44,20 @@ done_testing;
 
   package t::ZeroWriteHandle;
 
+  use Moo;
+
+  has calls => (
+    is      => 'rw',
+    reader  => '_calls',
+    writer  => '_set_calls',
+    default => sub {0},
+  );
+
+  no Moo;
+
   sub TIEHANDLE {
     my ($class) = @_;
-    return bless {calls => 0}, $class;
+    return $class->new;
   }
 
   sub WRITE {

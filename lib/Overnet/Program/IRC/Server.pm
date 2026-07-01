@@ -1,6 +1,7 @@
 package Overnet::Program::IRC::Server;
 
 use strictures 2;
+use Moo;
 use Carp        qw(croak);
 use Digest::SHA qw(sha256_hex);
 use Encode      qw(encode);
@@ -22,64 +23,260 @@ use Overnet::Program::Protocol;
 use Overnet::Program::TLSConfig;
 
 our $VERSION = '0.001';
-my $E2EE_DM_BODY_PREFIX = '+overnet-e2ee-v1 ';
+my $E2EE_DM_BODY_PREFIX     = '+overnet-e2ee-v1 ';
+my %SERVER_CONSTRUCTOR_ARGS = map { $_ => 1 } qw(protocol program_id program_version supported_protocol_versions);
 
-sub new {
-  my ($class, %args) = @_;
+has protocol => (
+  is      => 'ro',
+  reader  => '_protocol',
+  default => sub { Overnet::Program::Protocol->new },
+);
+has program_id => (
+  is      => 'ro',
+  reader  => '_program_id',
+  default => sub {'overnet.program.irc_server'},
+);
+has program_version => (
+  is      => 'ro',
+  reader  => '_program_version',
+  default => sub {$VERSION},
+);
+has supported_protocol_versions => (
+  is      => 'ro',
+  reader  => '_supported_protocol_versions',
+  default => sub { ['0.1'] },
+);
+has next_request_id => (
+  is      => 'rw',
+  reader  => '_next_request_id',
+  writer  => '_set_next_request_id',
+  default => sub {1},
+);
+has pending_messages => (
+  is      => 'rw',
+  reader  => '_pending_messages',
+  writer  => '_set_pending_messages',
+  default => sub { [] },
+);
+has next_client_id => (
+  is      => 'rw',
+  reader  => '_next_client_id',
+  writer  => '_set_next_client_id',
+  default => sub {1},
+);
+has clients => (
+  is      => 'rw',
+  reader  => '_clients',
+  writer  => '_set_clients',
+  default => sub { {} },
+);
+has channels => (
+  is      => 'rw',
+  reader  => '_channels',
+  writer  => '_set_channels',
+  default => sub { {} },
+);
+has nick_to_client_id => (
+  is      => 'rw',
+  reader  => '_nick_to_client_id',
+  writer  => '_set_nick_to_client_id',
+  default => sub { {} },
+);
+has suppress_subscription_event_ids => (
+  is      => 'rw',
+  reader  => '_suppress_subscription_event_ids',
+  writer  => '_set_suppress_subscription_event_ids',
+  default => sub { {} },
+);
+has subscription_event_origin_client_ids => (
+  is      => 'rw',
+  reader  => '_subscription_event_origin_client_ids',
+  writer  => '_set_subscription_event_origin_client_ids',
+  default => sub { {} },
+);
+has rendered_subscription_event_ids => (
+  is      => 'rw',
+  reader  => '_rendered_subscription_event_ids',
+  writer  => '_set_rendered_subscription_event_ids',
+  default => sub { {} },
+);
+has rendered_subscription_event_id_order => (
+  is      => 'rw',
+  reader  => '_rendered_subscription_event_id_order',
+  writer  => '_set_rendered_subscription_event_id_order',
+  default => sub { [] },
+);
+has authoritative_last_created_at => (
+  is      => 'rw',
+  reader  => '_authoritative_last_created_at',
+  writer  => '_set_authoritative_last_created_at',
+  default => sub { {} },
+);
+has authoritative_delegate_sequences => (
+  is      => 'rw',
+  reader  => '_authoritative_delegate_sequences',
+  writer  => '_set_authoritative_delegate_sequences',
+  default => sub { {} },
+);
+has authoritative_subscription_channels => (
+  is      => 'rw',
+  reader  => '_authoritative_subscription_channels',
+  writer  => '_set_authoritative_subscription_channels',
+  default => sub { {} },
+);
+has authoritative_discovered_channels => (
+  is      => 'rw',
+  reader  => '_authoritative_discovered_channels',
+  writer  => '_set_authoritative_discovered_channels',
+  default => sub { {} },
+);
+has authoritative_grant_subscription_id => (
+  is     => 'rw',
+  reader => '_stored_authoritative_grant_subscription_id',
+  writer => '_set_authoritative_grant_subscription_id',
+);
+has authoritative_discovery_subscription_id => (
+  is     => 'rw',
+  reader => '_stored_authoritative_discovery_subscription_id',
+  writer => '_set_authoritative_discovery_subscription_id',
+);
+has inputs_processed => (
+  is      => 'rw',
+  reader  => '_inputs_processed',
+  writer  => '_set_inputs_processed',
+  default => sub {0},
+);
+has events_emitted => (
+  is      => 'rw',
+  reader  => '_events_emitted',
+  writer  => '_set_events_emitted',
+  default => sub {0},
+);
+has state_emitted => (
+  is      => 'rw',
+  reader  => '_state_emitted',
+  writer  => '_set_state_emitted',
+  default => sub {0},
+);
+has private_messages_emitted => (
+  is      => 'rw',
+  reader  => '_private_messages_emitted',
+  writer  => '_set_private_messages_emitted',
+  default => sub {0},
+);
+has capabilities_emitted => (
+  is      => 'rw',
+  reader  => '_capabilities_emitted',
+  writer  => '_set_capabilities_emitted',
+  default => sub {0},
+);
 
-  my $protocol                    = $args{protocol}   || Overnet::Program::Protocol->new;
-  my $program_id                  = $args{program_id} || 'overnet.program.irc_server';
-  my $program_version             = exists $args{program_version} ? $args{program_version} : $VERSION;
-  my $supported_protocol_versions = $args{supported_protocol_versions} || ['0.1'];
+no Moo;
+
+sub BUILDARGS {
+  my ($class, @args) = @_;
+  my %args = _constructor_args_hash(@args);
+
+  my %constructor_args = _server_constructor_args(%args);
+  if ($class ne __PACKAGE__) {
+    _copy_subclass_constructor_args(\%args, \%constructor_args);
+  }
+
+  return \%constructor_args;
+}
+
+sub _constructor_args_hash {
+  my (@args) = @_;
+  return %{$args[0]} if @args == 1 && ref($args[0]) eq 'HASH';
+  return @args       if @args % 2 == 0;
+  die "constructor arguments must be a hash or hash reference\n";
+}
+
+sub _server_constructor_args {
+  my (%args) = @_;
+
+  my $protocol                    = _constructor_protocol(%args);
+  my $program_id                  = _constructor_program_id(%args);
+  my $program_version             = _constructor_program_version(%args);
+  my $supported_protocol_versions = _constructor_supported_protocol_versions(%args);
+
+  return (
+    protocol                    => $protocol,
+    program_id                  => $program_id,
+    program_version             => $program_version,
+    supported_protocol_versions => $supported_protocol_versions,
+  );
+}
+
+sub _constructor_protocol {
+  my (%args) = @_;
+
+  my $protocol = $args{protocol} || Overnet::Program::Protocol->new;
 
   if (!(ref($protocol) && $protocol->isa('Overnet::Program::Protocol'))) {
     croak "protocol must be an Overnet::Program::Protocol instance\n";
   }
 
+  return $protocol;
+}
+
+sub _constructor_program_id {
+  my (%args) = @_;
+
+  my $program_id = $args{program_id} || 'overnet.program.irc_server';
+
   if (!(defined $program_id && !ref($program_id) && length($program_id))) {
     croak "program_id is required\n";
   }
 
+  return $program_id;
+}
+
+sub _constructor_program_version {
+  my (%args) = @_;
+
+  my $program_version = exists $args{program_version} ? $args{program_version} : $VERSION;
+
   croak "program_version must be a non-empty string\n"
     if defined $program_version && (ref($program_version) || !length($program_version));
-  my $invalid_supported_protocol_version = grep { !defined || ref || !length } @{$supported_protocol_versions || []};
-  if (
-    !(
-         ref($supported_protocol_versions) eq 'ARRAY'
-      && @{$supported_protocol_versions}
-      && !$invalid_supported_protocol_version
-    )
-  ) {
+
+  return $program_version;
+}
+
+sub _constructor_supported_protocol_versions {
+  my (%args) = @_;
+
+  my $supported_protocol_versions = $args{supported_protocol_versions} || ['0.1'];
+
+  if (!_supported_protocol_versions_are_valid($supported_protocol_versions)) {
     croak "supported_protocol_versions must be a non-empty array of strings\n";
   }
 
-  return bless {
-    protocol                                => $protocol,
-    program_id                              => $program_id,
-    program_version                         => $program_version,
-    supported_protocol_versions             => [@{$supported_protocol_versions}],
-    next_request_id                         => 1,
-    pending_messages                        => [],
-    next_client_id                          => 1,
-    clients                                 => {},
-    channels                                => {},
-    nick_to_client_id                       => {},
-    suppress_subscription_event_ids         => {},
-    subscription_event_origin_client_ids    => {},
-    rendered_subscription_event_ids         => {},
-    rendered_subscription_event_id_order    => [],
-    authoritative_last_created_at           => {},
-    authoritative_delegate_sequences        => {},
-    authoritative_subscription_channels     => {},
-    authoritative_discovered_channels       => {},
-    authoritative_grant_subscription_id     => undef,
-    authoritative_discovery_subscription_id => undef,
-    inputs_processed                        => 0,
-    events_emitted                          => 0,
-    state_emitted                           => 0,
-    private_messages_emitted                => 0,
-    capabilities_emitted                    => 0,
-  }, $class;
+  return [@{$supported_protocol_versions}];
+}
+
+sub _supported_protocol_versions_are_valid {
+  my ($supported_protocol_versions) = @_;
+
+  return 0 if ref($supported_protocol_versions) ne 'ARRAY';
+  return 0 if !@{$supported_protocol_versions};
+
+  for my $version (@{$supported_protocol_versions}) {
+    return 0 if !defined($version) || ref($version) || !length($version);
+  }
+
+  return 1;
+}
+
+sub _copy_subclass_constructor_args {
+  my ($source_args, $constructor_args) = @_;
+
+  for my $name (keys %{$source_args}) {
+    next if $SERVER_CONSTRUCTOR_ARGS{$name};
+    $constructor_args->{$name} = $source_args->{$name};
+  }
+
+  return 1;
 }
 
 sub _is_shutdown_sentinel_error {
@@ -116,17 +313,20 @@ sub run {
   while (!$self->{initialized} && !$self->{shutdown_complete}) {
     my $message = $self->_next_runtime_message;
 
-    if (($message->{type} || q{}) eq 'request' && ($message->{method} || q{}) eq 'runtime.init') {
+    if ( ($message->{type} || q{}) eq 'request'
+      && ($message->{method} || q{}) eq 'runtime.init') {
       $self->_handle_runtime_init($message);
       next;
     }
 
-    if (($message->{type} || q{}) eq 'request' && ($message->{method} || q{}) eq 'runtime.shutdown') {
+    if ( ($message->{type} || q{}) eq 'request'
+      && ($message->{method} || q{}) eq 'runtime.shutdown') {
       $self->_handle_runtime_shutdown($message);
       next;
     }
 
-    if (($message->{type} || q{}) eq 'notification' && ($message->{method} || q{}) eq 'runtime.fatal') {
+    if ( ($message->{type} || q{}) eq 'notification'
+      && ($message->{method} || q{}) eq 'runtime.fatal') {
       croak "runtime fatal: " . ($message->{params}{code} || 'unknown') . "\n";
     }
 
@@ -308,13 +508,20 @@ sub _normalized_runtime_adapter_config {
 
 sub _validate_normalized_runtime_config {
   my ($config) = @_;
-  croak "config.adapter_id is required\n"       if !_nonempty_scalar($config->{adapter_id});
-  croak "config.network is required\n"          if !_nonempty_scalar($config->{network});
-  croak "config.listen_host is required\n"      if !_nonempty_scalar($config->{listen_host});
-  croak "config.server_name is required\n"      if !_nonempty_scalar($config->{server_name});
-  croak "config.signing_key_file is required\n" if !_nonempty_scalar($config->{signing_key_file});
-  croak "config.listen_port must be an integer between 0 and 65_535\n" if !_port_integer($config->{listen_port});
-  croak "config.listen_backlog must be a positive integer\n"           if !_positive_integer($config->{listen_backlog});
+  croak "config.adapter_id is required\n"
+    if !_nonempty_scalar($config->{adapter_id});
+  croak "config.network is required\n"
+    if !_nonempty_scalar($config->{network});
+  croak "config.listen_host is required\n"
+    if !_nonempty_scalar($config->{listen_host});
+  croak "config.server_name is required\n"
+    if !_nonempty_scalar($config->{server_name});
+  croak "config.signing_key_file is required\n"
+    if !_nonempty_scalar($config->{signing_key_file});
+  croak "config.listen_port must be an integer between 0 and 65_535\n"
+    if !_port_integer($config->{listen_port});
+  croak "config.listen_backlog must be a positive integer\n"
+    if !_positive_integer($config->{listen_backlog});
   $config->{listen_port}    = 0 + $config->{listen_port};
   $config->{listen_backlog} = 0 + $config->{listen_backlog};
   return 1;
@@ -580,7 +787,8 @@ sub _pump_client_socket {
   }
 
   my $probe_buffer = $client->{read_buffer} . $chunk;
-  if (!defined $self->{tls_server_args} && $self->_looks_like_tls_client_hello($probe_buffer)) {
+  if (!defined $self->{tls_server_args}
+    && $self->_looks_like_tls_client_hello($probe_buffer)) {
     $self->_log(
       level   => 'warn',
       message => 'TLS client hello received on plain IRC listener',
@@ -627,7 +835,8 @@ sub _looks_like_tls_client_hello {
     return 0;
   }
 
-  my ($content_type, $major, $minor) = unpack('C3', substr($buffer, 0, 3));
+  my ($content_type, $major, $minor) =
+    unpack('C3', substr($buffer, 0, 3));
   if (!($content_type == 0x16)) {
     return 0;
   }
@@ -902,7 +1111,9 @@ sub _handle_overnetkey_command {
     return 1;
   }
 
-  if (@{$params} < 2 || !_nonempty_scalar($params->[0]) || !_nonempty_scalar($params->[1])) {
+  if ( @{$params} < 2
+    || !_nonempty_scalar($params->[0])
+    || !_nonempty_scalar($params->[1])) {
     $self->_send_need_more_params($client_id, 'OVERNETKEY');
     return 1;
   }
@@ -941,7 +1152,10 @@ sub _handle_overnetkey_get_command {
   }
 
   my $target_client = $self->_client_for_current_nick($target_nick);
-  my $pubkey        = ref($target_client) eq 'HASH' ? ($target_client->{e2ee_pubkey} || q{*}) : q{*};
+  my $pubkey =
+    ref($target_client) eq 'HASH'
+    ? ($target_client->{e2ee_pubkey} || q{*})
+    : q{*};
   $self->_send_server_notice($client_id, "OVERNETKEY GET $target_nick $pubkey");
   return 1;
 }
@@ -1045,7 +1259,9 @@ sub _register_client_if_ready {
   }
 
   return 0 if $client->{cap_negotiation_active};
-  return 0 if defined $client->{sasl_mechanism} && length($client->{sasl_mechanism});
+  return 0
+    if defined $client->{sasl_mechanism}
+    && length($client->{sasl_mechanism});
 
   $client->{registered} = 1;
   $client->{dm_key} ||= Overnet::Core::Nostr->generate_key;
@@ -1415,7 +1631,11 @@ sub _send_channel_mode_is {
   my $channel_modes = '+n';
   my @mode_args;
 
-  if (my $authoritative = $self->_derive_authoritative_channel_state($display_channel, force => 1)) {
+  if (
+    my $authoritative = $self->_derive_authoritative_channel_state(
+      $display_channel, force => 1
+    )
+  ) {
     if ( defined $authoritative->{channel_modes}
       && !ref($authoritative->{channel_modes})
       && length($authoritative->{channel_modes})) {
@@ -1426,7 +1646,8 @@ sub _send_channel_mode_is {
       && length($authoritative->{channel_key})) {
       push @mode_args, $authoritative->{channel_key};
     }
-    if (defined($authoritative->{user_limit}) && !ref($authoritative->{user_limit})) {
+    if (defined($authoritative->{user_limit})
+      && !ref($authoritative->{user_limit})) {
       push @mode_args, $authoritative->{user_limit};
     }
   }
@@ -1461,8 +1682,9 @@ sub _send_lusers_reply {
   my ($self, $client_id) = @_;
   my $client = $self->{clients}{$client_id}
     or return 0;
-  my $target            = $self->_client_numeric_target($client);
-  my $registered_users  = scalar grep { $self->{clients}{$_}{registered} } keys %{$self->{clients}};
+  my $target           = $self->_client_numeric_target($client);
+  my $registered_users = scalar grep { $self->{clients}{$_}{registered} }
+    keys %{$self->{clients}};
   my $connected_clients = scalar keys %{$self->{clients}};
   my $channels          = scalar keys %{$self->{channels}};
 
@@ -1573,7 +1795,7 @@ sub _send_topic_reply {
     my $cached_view = $self->_cached_authoritative_channel_view($display_channel);
     my $view =
       $self->_authority_relay_enabled
-      ? eval { $self->_derive_authoritative_channel_view($display_channel, force => 1) }
+      ? eval { $self->_derive_authoritative_channel_view($display_channel, force => 1); }
       : $self->_derive_authoritative_channel_view($display_channel);
     if (!(ref($view) eq 'HASH')) {
       $view = $cached_view;
@@ -1768,7 +1990,9 @@ sub _presentational_host_for_client {
   }
 
   return $client->{peerhost}
-    if defined $client->{peerhost} && !ref($client->{peerhost}) && length($client->{peerhost});
+    if defined $client->{peerhost}
+    && !ref($client->{peerhost})
+    && length($client->{peerhost});
   return $self->_default_presentational_host;
 }
 
@@ -2128,9 +2352,18 @@ sub _derive_authoritative_view_from_events {
           network              => $self->{config}{network},
           target               => $self->_canonical_channel_name($channel),
           authoritative_events => $authoritative_events,
-          (defined $args{actor_pubkey}       ? (actor_pubkey => $args{actor_pubkey}) : ()),
-          (defined $args{actor_mask}         ? (actor_mask => $args{actor_mask})     : ()),
-          (ref($args{extra_input}) eq 'HASH' ? %{$args{extra_input}}                 : ()),
+          (
+            defined $args{actor_pubkey} ? (actor_pubkey => $args{actor_pubkey})
+            : ()
+          ),
+          (
+            defined $args{actor_mask} ? (actor_mask => $args{actor_mask})
+            : ()
+          ),
+          (
+            ref($args{extra_input}) eq 'HASH' ? %{$args{extra_input}}
+            : ()
+          ),
         },
       },
     );
@@ -2145,8 +2378,8 @@ sub _derive_authoritative_view_from_events {
 
 sub _derive_authoritative_channel_view_from_events {
   my ($self, $channel, $authoritative_events, %args) = @_;
-  return $self->_derive_authoritative_view_from_events('authoritative_channel_view', $channel, $authoritative_events,
-    %args,);
+  return $self->_derive_authoritative_view_from_events('authoritative_channel_view', $channel,
+    $authoritative_events, %args,);
 }
 
 sub _derive_authoritative_join_admission_from_events {
@@ -2169,9 +2402,18 @@ sub _derive_authoritative_join_admission_from_events {
           network              => $self->{config}{network},
           target               => $self->_canonical_channel_name($channel),
           authoritative_events => $authoritative_events,
-          (defined $args{actor_pubkey}       ? (actor_pubkey => $args{actor_pubkey}) : ()),
-          (defined $args{actor_mask}         ? (actor_mask => $args{actor_mask})     : ()),
-          (ref($args{extra_input}) eq 'HASH' ? %{$args{extra_input}}                 : ()),
+          (
+            defined $args{actor_pubkey} ? (actor_pubkey => $args{actor_pubkey})
+            : ()
+          ),
+          (
+            defined $args{actor_mask} ? (actor_mask => $args{actor_mask})
+            : ()
+          ),
+          (
+            ref($args{extra_input}) eq 'HASH' ? %{$args{extra_input}}
+            : ()
+          ),
         },
       },
     );
@@ -2208,9 +2450,18 @@ sub _derive_authoritative_permission_from_events {
           network              => $self->{config}{network},
           target               => $self->_canonical_channel_name($channel),
           authoritative_events => $authoritative_events,
-          (defined $args{actor_pubkey}       ? (actor_pubkey => $args{actor_pubkey}) : ()),
-          (defined $args{actor_mask}         ? (actor_mask => $args{actor_mask})     : ()),
-          (ref($args{extra_input}) eq 'HASH' ? %{$args{extra_input}}                 : ()),
+          (
+            defined $args{actor_pubkey} ? (actor_pubkey => $args{actor_pubkey})
+            : ()
+          ),
+          (
+            defined $args{actor_mask} ? (actor_mask => $args{actor_mask})
+            : ()
+          ),
+          (
+            ref($args{extra_input}) eq 'HASH' ? %{$args{extra_input}}
+            : ()
+          ),
         },
       },
     );
@@ -2269,21 +2520,35 @@ sub _authoritative_channel_state_from_view {
     group_id          => $view->{group_id},
     group_ref         => $view->{group_ref},
     channel_modes     => $view->{channel_modes},
-    (ref($view->{ban_masks}) eq 'ARRAY'       ? (ban_masks       => [@{$view->{ban_masks}}])       : ()),
-    (ref($view->{exception_masks}) eq 'ARRAY' ? (exception_masks => [@{$view->{exception_masks}}]) : ()),
     (
-      ref($view->{invite_exception_masks}) eq 'ARRAY'
-      ? (invite_exception_masks => [@{$view->{invite_exception_masks}}])
+      ref($view->{ban_masks}) eq 'ARRAY' ? (ban_masks => [@{$view->{ban_masks}}])
       : ()
     ),
-    (defined($view->{channel_key})      ? (channel_key        => $view->{channel_key})        : ()),
-    (defined($view->{user_limit})       ? (user_limit         => $view->{user_limit})         : ()),
-    (exists $view->{topic}              ? (topic              => $view->{topic})              : ()),
-    (exists $view->{topic_actor_pubkey} ? (topic_actor_pubkey => $view->{topic_actor_pubkey}) : ()),
-    ($view->{private}                   ? (private            => 1)                           : ()),
-    ($view->{restricted}                ? (restricted         => 1)                           : ()),
-    ($view->{hidden}                    ? (hidden             => 1)                           : ()),
-    ($view->{tombstoned}                ? (tombstoned         => 1)                           : ()),
+    (
+      ref($view->{exception_masks}) eq 'ARRAY' ? (exception_masks => [@{$view->{exception_masks}}])
+      : ()
+    ),
+    (
+      ref($view->{invite_exception_masks}) eq 'ARRAY' ? (invite_exception_masks => [@{$view->{invite_exception_masks}}])
+      : ()
+    ),
+    (
+      defined($view->{channel_key}) ? (channel_key => $view->{channel_key})
+      : ()
+    ),
+    (
+      defined($view->{user_limit}) ? (user_limit => $view->{user_limit})
+      : ()
+    ),
+    (exists $view->{topic} ? (topic => $view->{topic}) : ()),
+    (
+      exists $view->{topic_actor_pubkey} ? (topic_actor_pubkey => $view->{topic_actor_pubkey})
+      : ()
+    ),
+    ($view->{private}    ? (private    => 1) : ()),
+    ($view->{restricted} ? (restricted => 1) : ()),
+    ($view->{hidden}     ? (hidden     => 1) : ()),
+    ($view->{tombstoned} ? (tombstoned => 1) : ()),
     supported_roles => [@{$view->{supported_roles} || []}],
     members         => [
       map {
@@ -2338,7 +2603,8 @@ sub _derive_authoritative_channel_view {
       ($args{force} && $self->_authority_relay_enabled ? (refresh => 1) : ()),
     );
     $cache = $self->{authoritative_channel_cache}{$canonical};
-    if ($args{reconcile_pending_invites} && $self->_authority_relay_enabled) {
+    if ( $args{reconcile_pending_invites}
+      && $self->_authority_relay_enabled) {
       $self->_reconcile_authoritative_pending_invites_from_refresh(
         channel    => $canonical,
         old_view   => $old_view,
@@ -2410,7 +2676,8 @@ sub _derive_authoritative_join_admission {
       ($args{force} && $self->_authority_relay_enabled ? (refresh => 1) : ()),
     );
     $cache = $self->{authoritative_channel_cache}{$canonical};
-    if ($args{reconcile_pending_invites} && $self->_authority_relay_enabled) {
+    if ( $args{reconcile_pending_invites}
+      && $self->_authority_relay_enabled) {
       $self->_reconcile_authoritative_pending_invites_from_refresh(
         channel    => $canonical,
         old_view   => $old_view,
@@ -2515,7 +2782,9 @@ sub _derive_authoritative_mode_write_permission {
     actor_pubkey => $args{actor_pubkey},
     extra_input  => {
       mode      => $args{mode},
-      mode_args => ref($args{mode_args}) eq 'ARRAY' ? $args{mode_args} : [],
+      mode_args => ref($args{mode_args}) eq 'ARRAY'
+      ? $args{mode_args}
+      : [],
     },
   );
 }
@@ -2551,7 +2820,11 @@ sub _derive_authoritative_channel_action_permission {
     actor_pubkey => $args{actor_pubkey},
     extra_input  => {
       action => $args{action},
-      (defined $args{target_pubkey} ? (target_pubkey => $args{target_pubkey}) : ()),
+      (
+        defined $args{target_pubkey}
+        ? (target_pubkey => $args{target_pubkey})
+        : ()
+      ),
     },
   );
 }
@@ -2659,7 +2932,8 @@ sub _authoritative_grant_nick_map {
     }
 
     my $current = $nick_by_pubkey{$entry->{pubkey}};
-    if ($current && (($current->{created_at} || 0) > $entry->{created_at})) {
+    if ($current
+      && (($current->{created_at} || 0) > $entry->{created_at})) {
       next;
     }
 
@@ -2763,7 +3037,9 @@ sub _authoritative_member_for_pubkey {
   }
 
   my $field =
-    defined $args{field} && !ref($args{field}) && length($args{field})
+       defined $args{field}
+    && !ref($args{field})
+    && length($args{field})
     ? $args{field}
     : 'members';
 
@@ -2892,23 +3168,32 @@ sub _channel_is_topic_restricted_for_client {
 sub _authoritative_group_metadata_from_state {
   my ($self, $state) = @_;
   return {
-    closed           => $self->_channel_mode_enabled($state, 'i') ? 1                        : 0,
-    moderated        => $self->_channel_mode_enabled($state, 'm') ? 1                        : 0,
-    topic_restricted => $self->_channel_mode_enabled($state, 't') ? 1                        : 0,
-    ban_masks        => ref($state->{ban_masks}) eq 'ARRAY'       ? [@{$state->{ban_masks}}] : [],
+    closed           => $self->_channel_mode_enabled($state, 'i') ? 1 : 0,
+    moderated        => $self->_channel_mode_enabled($state, 'm') ? 1 : 0,
+    topic_restricted => $self->_channel_mode_enabled($state, 't') ? 1 : 0,
+    ban_masks        => ref($state->{ban_masks}) eq 'ARRAY'       ? [@{$state->{ban_masks}}]
+    : [],
     (
       ref($state->{exception_masks}) eq 'ARRAY'
-        && @{$state->{exception_masks}} ? (exception_masks => [@{$state->{exception_masks}}]) : ()
+        && @{$state->{exception_masks}} ? (exception_masks => [@{$state->{exception_masks}}])
+      : ()
     ),
     (
       ref($state->{invite_exception_masks}) eq 'ARRAY'
-        && @{$state->{invite_exception_masks}} ? (invite_exception_masks => [@{$state->{invite_exception_masks}}]) : ()
+        && @{$state->{invite_exception_masks}} ? (invite_exception_masks => [@{$state->{invite_exception_masks}}])
+      : ()
     ),
-    (defined($state->{channel_key}) ? (channel_key => $state->{channel_key}) : ()),
-    (defined($state->{user_limit})  ? (user_limit  => $state->{user_limit})  : ()),
-    ($state->{private}              ? (private     => 1)                     : ()),
-    ($state->{restricted}           ? (restricted  => 1)                     : ()),
-    ($state->{hidden}               ? (hidden      => 1)                     : ()),
+    (
+      defined($state->{channel_key}) ? (channel_key => $state->{channel_key})
+      : ()
+    ),
+    (
+      defined($state->{user_limit}) ? (user_limit => $state->{user_limit})
+      : ()
+    ),
+    ($state->{private}    ? (private    => 1) : ()),
+    ($state->{restricted} ? (restricted => 1) : ()),
+    ($state->{hidden}     ? (hidden     => 1) : ()),
     tombstoned => $state->{tombstoned} ? 1 : 0,
     (exists($state->{topic}) ? (topic => $state->{topic}) : ()),
   };
@@ -2925,7 +3210,9 @@ sub _authoritative_irc_mask_for_client {
   }
 
   my $username =
-    defined $client->{username} && !ref($client->{username}) && length($client->{username})
+       defined $client->{username}
+    && !ref($client->{username})
+    && length($client->{username})
     ? $client->{username}
     : $client->{nick};
   my $host = $self->_presentational_host_for_client($client);
@@ -3003,7 +3290,9 @@ sub _apply_authoritative_channel_tombstone {
   }
 
   my $reason =
-    defined($args{reason}) && !ref($args{reason}) && length($args{reason})
+       defined($args{reason})
+    && !ref($args{reason})
+    && length($args{reason})
     ? $args{reason}
     : 'channel deleted';
   my $channel_key = $self->_channel_key($display_channel);
@@ -3019,7 +3308,8 @@ sub _apply_authoritative_channel_tombstone {
     return 1;
   }
 
-  my @client_ids = grep { exists $self->{clients}{$_} } sort keys %{$state->{members} || {}};
+  my @client_ids = grep { exists $self->{clients}{$_} }
+    sort keys %{$state->{members} || {}};
   for my $client_id (@client_ids) {
     my $client = $self->{clients}{$client_id};
     if (!(ref($client) eq 'HASH')) {
@@ -3027,7 +3317,9 @@ sub _apply_authoritative_channel_tombstone {
     }
 
     my $nick =
-      defined $client->{nick} && !ref($client->{nick}) && length($client->{nick})
+         defined $client->{nick}
+      && !ref($client->{nick})
+      && length($client->{nick})
       ? $client->{nick}
       : $self->{config}{server_name};
     my $line = sprintf(':%s PART %s', $nick, $display_channel);
@@ -3093,12 +3385,18 @@ sub _authoritative_join_admission_for_client {
 sub _read_authoritative_join_events {
   my ($self, $channel) = @_;
   my $canonical = $self->_canonical_channel_name($channel);
-  my $cache     = defined $canonical ? $self->{authoritative_channel_cache}{$canonical} : undef;
+  my $cache =
+    defined $canonical
+    ? $self->{authoritative_channel_cache}{$canonical}
+    : undef;
   my $events =
       $self->_authority_relay_enabled && !(ref($cache) eq 'HASH' && ref($cache->{events}) eq 'ARRAY')
     ? $self->_read_authoritative_nip29_events($channel, force => 1)
     : $self->_read_authoritative_nip29_events($channel);
-  if (ref($events) eq 'ARRAY' && !@{$events} && $self->_authority_relay_enabled && ref($cache) eq 'HASH') {
+  if ( ref($events) eq 'ARRAY'
+    && !@{$events}
+    && $self->_authority_relay_enabled
+    && ref($cache) eq 'HASH') {
     return $self->_read_authoritative_nip29_events($channel, force => 1);
   }
   return $events;
@@ -3145,7 +3443,11 @@ sub _join_admission_actor_args {
   return (
     actor_pubkey => $args{pubkey},
     actor_mask   => $args{actor_mask},
-    (defined($args{join_key}) ? (extra_input => {join_key => $args{join_key}}) : ()),
+    (
+      defined($args{join_key})
+      ? (extra_input => {join_key => $args{join_key}})
+      : ()
+    ),
     reconcile_pending_invites => 1,
   );
 }
@@ -3187,14 +3489,46 @@ sub _normalized_authoritative_join_admission {
 
   return {
     allowed => $admission->{allowed} ? 1 : 0,
-    (defined $admission->{member}          ? (member => $admission->{member} ? 1 : 0)                   : ()),
-    (defined $admission->{present}         ? (present => $admission->{present} ? 1 : 0)                 : ()),
-    (defined $admission->{invite_code}     ? (invite_code => $admission->{invite_code})                 : ()),
-    (defined $admission->{deleted}         ? (deleted => $admission->{deleted} ? 1 : 0)                 : ()),
-    (defined $admission->{create_channel}  ? (create_channel => $admission->{create_channel} ? 1 : 0)   : ()),
-    (defined $admission->{auth_required}   ? (auth_required => $admission->{auth_required} ? 1 : 0)     : ()),
-    (defined $admission->{request_join}    ? (request_join => $admission->{request_join} ? 1 : 0)       : ()),
-    (defined $admission->{pending_request} ? (pending_request => $admission->{pending_request} ? 1 : 0) : ()),
+    (
+      defined $admission->{member}
+      ? (member => $admission->{member} ? 1 : 0)
+      : ()
+    ),
+    (
+      defined $admission->{present}
+      ? (present => $admission->{present} ? 1 : 0)
+      : ()
+    ),
+    (
+      defined $admission->{invite_code}
+      ? (invite_code => $admission->{invite_code})
+      : ()
+    ),
+    (
+      defined $admission->{deleted}
+      ? (deleted => $admission->{deleted} ? 1 : 0)
+      : ()
+    ),
+    (
+      defined $admission->{create_channel}
+      ? (create_channel => $admission->{create_channel} ? 1 : 0)
+      : ()
+    ),
+    (
+      defined $admission->{auth_required}
+      ? (auth_required => $admission->{auth_required} ? 1 : 0)
+      : ()
+    ),
+    (
+      defined $admission->{request_join}
+      ? (request_join => $admission->{request_join} ? 1 : 0)
+      : ()
+    ),
+    (
+      defined $admission->{pending_request}
+      ? (pending_request => $admission->{pending_request} ? 1 : 0)
+      : ()
+    ),
     reason => defined $admission->{reason} ? $admission->{reason} : q{},
   };
 }
@@ -3260,11 +3594,31 @@ sub _join_admission_from_view_admission {
     scalar grep { ref eq 'HASH' && defined($_->{pubkey}) && $_->{pubkey} eq $pubkey } @{$view->{present_members} || []};
   return {
     allowed => $admission->{allowed} ? 1 : 0,
-    (defined $admission->{member}          ? (member => $admission->{member} ? 1 : 0)                   : ()),
-    (defined $admission->{invite_code}     ? (invite_code => $admission->{invite_code})                 : ()),
-    (defined $admission->{deleted}         ? (deleted => $admission->{deleted} ? 1 : 0)                 : ()),
-    (defined $admission->{request_join}    ? (request_join => $admission->{request_join} ? 1 : 0)       : ()),
-    (defined $admission->{pending_request} ? (pending_request => $admission->{pending_request} ? 1 : 0) : ()),
+    (
+      defined $admission->{member}
+      ? (member => $admission->{member} ? 1 : 0)
+      : ()
+    ),
+    (
+      defined $admission->{invite_code}
+      ? (invite_code => $admission->{invite_code})
+      : ()
+    ),
+    (
+      defined $admission->{deleted}
+      ? (deleted => $admission->{deleted} ? 1 : 0)
+      : ()
+    ),
+    (
+      defined $admission->{request_join}
+      ? (request_join => $admission->{request_join} ? 1 : 0)
+      : ()
+    ),
+    (
+      defined $admission->{pending_request}
+      ? (pending_request => $admission->{pending_request} ? 1 : 0)
+      : ()
+    ),
     present => $present                     ? 1                    : 0,
     reason  => defined $admission->{reason} ? $admission->{reason} : q{},
   };
@@ -3286,8 +3640,10 @@ sub _authoritative_speak_permission_for_client {
   my $pubkey = $self->_client_authoritative_pubkey($client);
   if (!defined $pubkey) {
     return {
-      allowed => $self->_channel_is_moderated_for_client($channel, $client) ? 0    : 1,
-      reason  => $self->_channel_is_moderated_for_client($channel, $client) ? '+m' : q{},
+      allowed => $self->_channel_is_moderated_for_client($channel, $client) ? 0
+      : 1,
+      reason => $self->_channel_is_moderated_for_client($channel, $client) ? '+m'
+      : q{},
     };
   }
 
@@ -3303,14 +3659,18 @@ sub _authoritative_speak_permission_for_client {
   if ($self->_authoritative_permission_is_populated($permission)
     && (($permission->{reason} || q{}) ne 'authoritative state unavailable')) {
     return {
-      allowed => $permission->{allowed}        ? 1                     : 0,
-      reason  => defined $permission->{reason} ? $permission->{reason} : q{},
+      allowed => $permission->{allowed} ? 1 : 0,
+      reason  => defined $permission->{reason}
+      ? $permission->{reason}
+      : q{},
     };
   }
 
   return {
-    allowed => $self->_channel_is_moderated_for_client($channel, $client) ? 0    : 1,
-    reason  => $self->_channel_is_moderated_for_client($channel, $client) ? '+m' : q{},
+    allowed => $self->_channel_is_moderated_for_client($channel, $client) ? 0
+    : 1,
+    reason => $self->_channel_is_moderated_for_client($channel, $client) ? '+m'
+    : q{},
   };
 }
 
@@ -3336,14 +3696,18 @@ sub _authoritative_topic_permission_for_client {
   if ($self->_authoritative_permission_is_populated($permission)
     && (($permission->{reason} || q{}) ne 'authoritative state unavailable')) {
     return {
-      allowed => $permission->{allowed}        ? 1                     : 0,
-      reason  => defined $permission->{reason} ? $permission->{reason} : q{},
+      allowed => $permission->{allowed} ? 1 : 0,
+      reason  => defined $permission->{reason}
+      ? $permission->{reason}
+      : q{},
     };
   }
 
   return {
-    allowed => $self->_channel_is_topic_restricted_for_client($channel, $client) ? 0    : 1,
-    reason  => $self->_channel_is_topic_restricted_for_client($channel, $client) ? '+t' : q{},
+    allowed => $self->_channel_is_topic_restricted_for_client($channel, $client) ? 0
+    : 1,
+    reason => $self->_channel_is_topic_restricted_for_client($channel, $client) ? '+t'
+    : q{},
   };
 }
 
@@ -3425,11 +3789,21 @@ sub _fallback_authoritative_mode_write_permission {
 sub _normalized_authoritative_mode_permission {
   my ($permission) = @_;
   return {
-    allowed => $permission->{allowed}         ? 1                     : 0,
-    reason  => defined($permission->{reason}) ? $permission->{reason} : q{},
-    (defined $permission->{target_pubkey}         ? (target_pubkey       => $permission->{target_pubkey})       : ()),
-    (ref($permission->{current_roles}) eq 'ARRAY' ? (current_roles       => [@{$permission->{current_roles}}])  : ()),
-    (defined $permission->{normalized_ban_mask}   ? (normalized_ban_mask => $permission->{normalized_ban_mask}) : ()),
+    allowed => $permission->{allowed}         ? 1 : 0,
+    reason  => defined($permission->{reason}) ? $permission->{reason}
+    : q{},
+    (
+      defined $permission->{target_pubkey} ? (target_pubkey => $permission->{target_pubkey})
+      : ()
+    ),
+    (
+      ref($permission->{current_roles}) eq 'ARRAY' ? (current_roles => [@{$permission->{current_roles}}])
+      : ()
+    ),
+    (
+      defined $permission->{normalized_ban_mask} ? (normalized_ban_mask => $permission->{normalized_ban_mask})
+      : ()
+    ),
     (
       defined $permission->{normalized_exception_mask}
       ? (normalized_exception_mask => $permission->{normalized_exception_mask})
@@ -3440,16 +3814,26 @@ sub _normalized_authoritative_mode_permission {
       ? (normalized_invite_exception_mask => $permission->{normalized_invite_exception_mask})
       : ()
     ),
-    (defined $permission->{channel_key}           ? (channel_key    => $permission->{channel_key})         : ()),
-    (defined $permission->{user_limit}            ? (user_limit     => $permission->{user_limit})          : ()),
-    (ref($permission->{group_metadata}) eq 'HASH' ? (group_metadata => {%{$permission->{group_metadata}}}) : ()),
+    (
+      defined $permission->{channel_key} ? (channel_key => $permission->{channel_key})
+      : ()
+    ),
+    (
+      defined $permission->{user_limit} ? (user_limit => $permission->{user_limit})
+      : ()
+    ),
+    (
+      ref($permission->{group_metadata}) eq 'HASH' ? (group_metadata => {%{$permission->{group_metadata}}})
+      : ()
+    ),
   };
 }
 
 sub _usable_authoritative_permission {
   my ($self, $permission) = @_;
   return 0 if !$self->_authoritative_permission_is_populated($permission);
-  return 0 if (($permission->{reason} || q{}) eq 'authoritative state unavailable');
+  return 0
+    if (($permission->{reason} || q{}) eq 'authoritative state unavailable');
   return 1;
 }
 
@@ -3537,8 +3921,11 @@ sub _derived_authoritative_channel_action_permission {
     return;
   }
 
-  my @target_args = defined $args{target_pubkey} ? (target_pubkey => $args{target_pubkey}) : ();
-  my $permission  = $self->_derive_authoritative_channel_action_permission(
+  my @target_args =
+    defined $args{target_pubkey}
+    ? (target_pubkey => $args{target_pubkey})
+    : ();
+  my $permission = $self->_derive_authoritative_channel_action_permission(
     $channel,
     actor_pubkey => $pubkey,
     action       => $action,
@@ -3563,10 +3950,17 @@ sub _derived_authoritative_channel_action_permission {
 sub _normalized_authoritative_channel_action_permission {
   my ($permission) = @_;
   return {
-    allowed => $permission->{allowed}         ? 1                     : 0,
-    reason  => defined($permission->{reason}) ? $permission->{reason} : q{},
-    (defined $permission->{target_pubkey}         ? (target_pubkey  => $permission->{target_pubkey})       : ()),
-    (ref($permission->{group_metadata}) eq 'HASH' ? (group_metadata => {%{$permission->{group_metadata}}}) : ()),
+    allowed => $permission->{allowed}         ? 1 : 0,
+    reason  => defined($permission->{reason}) ? $permission->{reason}
+    : q{},
+    (
+      defined $permission->{target_pubkey} ? (target_pubkey => $permission->{target_pubkey})
+      : ()
+    ),
+    (
+      ref($permission->{group_metadata}) eq 'HASH' ? (group_metadata => {%{$permission->{group_metadata}}})
+      : ()
+    ),
   };
 }
 
@@ -3608,10 +4002,12 @@ sub _fallback_authoritative_channel_action_permission {
   return {
     allowed => 1,
     reason  => q{},
-    (defined $args{target_pubkey} ? (target_pubkey => $args{target_pubkey}) : ()),
     (
-        ($args{action} || q{}) eq 'delete'
-      ? (group_metadata => $self->_authoritative_group_metadata_from_state($state))
+      defined $args{target_pubkey} ? (target_pubkey => $args{target_pubkey})
+      : ()
+    ),
+    (
+        ($args{action} || q{}) eq 'delete' ? (group_metadata => $self->_authoritative_group_metadata_from_state($state))
       : ()
     ),
   };
@@ -3654,7 +4050,8 @@ sub _authoritative_name_entries_for_channel {
 
 sub _present_authoritative_members_by_pubkey {
   my ($view) = @_;
-  return map { ($_->{pubkey} => $_) } grep { ref eq 'HASH' && defined($_->{pubkey}) } @{$view->{present_members} || []};
+  return map { ($_->{pubkey} => $_) }
+    grep { ref eq 'HASH' && defined($_->{pubkey}) } @{$view->{present_members} || []};
 }
 
 sub _add_local_authoritative_name_entries {
@@ -3768,7 +4165,8 @@ sub _handle_authoritative_part_command {
     return 1;
   }
 
-  if ($self->_authority_relay_enabled && !$self->_client_has_authoritative_delegation($client)) {
+  if ($self->_authority_relay_enabled
+    && !$self->_client_has_authoritative_delegation($client)) {
     $self->_send_server_notice($client_id, 'OVERNETAUTH DELEGATE is required for authoritative PART');
     return 1;
   }
@@ -3825,7 +4223,8 @@ sub _handle_authoritative_topic_command {
     return $self->_send_chan_op_privs_needed($client_id, $channel);
   }
 
-  if ($self->_authority_relay_enabled && !$self->_client_has_authoritative_delegation($client)) {
+  if ($self->_authority_relay_enabled
+    && !$self->_client_has_authoritative_delegation($client)) {
     $self->_send_server_notice($client_id, 'OVERNETAUTH DELEGATE is required for authoritative TOPIC');
     return 1;
   }
@@ -3881,7 +4280,8 @@ sub _handle_authoritative_delete_command {
     ? $permission->{group_metadata}
     : undef;
 
-  if ($self->_authority_relay_enabled && !$self->_client_has_authoritative_delegation($client)) {
+  if ($self->_authority_relay_enabled
+    && !$self->_client_has_authoritative_delegation($client)) {
     $self->_send_server_notice($client_id, 'OVERNETAUTH DELEGATE is required for authoritative channel deletion');
     return 1;
   }
@@ -3931,7 +4331,8 @@ sub _handle_authoritative_undelete_command {
     ? $permission->{group_metadata}
     : undef;
 
-  if ($self->_authority_relay_enabled && !$self->_client_has_authoritative_delegation($client)) {
+  if ($self->_authority_relay_enabled
+    && !$self->_client_has_authoritative_delegation($client)) {
     $self->_send_server_notice($client_id, 'OVERNETAUTH DELEGATE is required for authoritative channel undeletion');
     return 1;
   }
@@ -4000,7 +4401,8 @@ sub _handle_authoritative_mode_command {
     return $permission_result;
   }
 
-  if ($self->_authority_relay_enabled && !$self->_client_has_authoritative_delegation($client)) {
+  if ($self->_authority_relay_enabled
+    && !$self->_client_has_authoritative_delegation($client)) {
     $self->_send_server_notice($client_id, 'OVERNETAUTH DELEGATE is required for authoritative MODE');
     return 1;
   }
@@ -4046,7 +4448,8 @@ sub _send_authoritative_ban_mode_list {
   my $ban_masks =
     ref($ban_list_view) eq 'HASH' && ref($ban_list_view->{ban_masks}) eq 'ARRAY'
     ? $ban_list_view->{ban_masks}
-    : $state->{ban_masks} || [];
+    : $state->{ban_masks}
+    || [];
   for my $ban_mask (@{$ban_masks}) {
     $self->_send_ban_list_entry($client_id, $channel, $ban_mask);
   }
@@ -4058,7 +4461,7 @@ sub _authoritative_ban_list_view_for_mode {
   my ($self, $channel) = @_;
   my $ban_list_view =
     $self->_authority_relay_enabled
-    ? eval { $self->_derive_authoritative_ban_list_view($channel, force => 1) }
+    ? eval { $self->_derive_authoritative_ban_list_view($channel, force => 1); }
     : $self->_derive_authoritative_ban_list_view($channel);
   if (!$self->_authority_relay_enabled && ref($ban_list_view) ne 'HASH') {
     return $self->_derive_authoritative_ban_list_view($channel, force => 1,);
@@ -4309,7 +4712,8 @@ sub _handle_authoritative_kick_command {
 
   my $actor_pubkey = $self->_client_authoritative_pubkey($client);
   my $reason       = @params >= 3 ? $params[2] : undef;
-  if ($self->_authority_relay_enabled && !$self->_client_has_authoritative_delegation($client)) {
+  if ($self->_authority_relay_enabled
+    && !$self->_client_has_authoritative_delegation($client)) {
     $self->_send_server_notice($client_id, 'OVERNETAUTH DELEGATE is required for authoritative KICK');
     return 1;
   }
@@ -4387,7 +4791,8 @@ sub _handle_authoritative_invite_command {
     target_pubkey => $target_pubkey,
   );
 
-  if ($self->_authority_relay_enabled && !$self->_client_has_authoritative_delegation($client)) {
+  if ($self->_authority_relay_enabled
+    && !$self->_client_has_authoritative_delegation($client)) {
     $self->_send_server_notice($client_id, 'OVERNETAUTH DELEGATE is required for authoritative INVITE');
     return 1;
   }
@@ -4487,7 +4892,8 @@ sub _nick_in_use {
     return 0;
   }
 
-  return 0 if defined $args{exclude_client_id} && $owner eq $args{exclude_client_id};
+  return 0
+    if defined $args{exclude_client_id} && $owner eq $args{exclude_client_id};
   return 1;
 }
 
@@ -4500,7 +4906,9 @@ sub _assign_client_nick {
     return 0;
   }
 
-  if (defined $client->{nick} && length($client->{nick}) && $client->{nick} ne $nick) {
+  if ( defined $client->{nick}
+    && length($client->{nick})
+    && $client->{nick} ne $nick) {
     $self->_release_client_nick($client_id, nick => $client->{nick},);
   }
 
@@ -4704,7 +5112,9 @@ sub _next_authoritative_delegate_sequence {
   }
 
   my $sequence_key =
-    defined($client->{id}) && !ref($client->{id}) && length($client->{id})
+       defined($client->{id})
+    && !ref($client->{id})
+    && length($client->{id})
     ? $client->{id}
     : undef;
   my $next =
@@ -4729,7 +5139,9 @@ sub _next_authoritative_created_at {
   }
 
   my $key =
-    defined($client->{id}) && !ref($client->{id}) && length($client->{id})
+       defined($client->{id})
+    && !ref($client->{id})
+    && length($client->{id})
     ? $client->{id}
     : undef;
   if (!(defined $key)) {
@@ -4931,8 +5343,10 @@ sub _authoritative_topic_snapshot {
   my $has_topic = ref($view) eq 'HASH' && exists $view->{topic} ? 1 : 0;
   return {
     has_topic => $has_topic,
-    topic     => $has_topic                                                 ? $view->{topic}              : undef,
-    actor     => ref($view) eq 'HASH' && exists $view->{topic_actor_pubkey} ? $view->{topic_actor_pubkey} : undef,
+    topic     => $has_topic ? $view->{topic} : undef,
+    actor     => ref($view) eq 'HASH' && exists $view->{topic_actor_pubkey}
+    ? $view->{topic_actor_pubkey}
+    : undef,
   };
 }
 
@@ -5004,8 +5418,10 @@ sub _same_authoritative_mode_flag {
 
 sub _broadcast_authoritative_ban_mask_updates {
   my ($self, $channel, $actor_nick, $old_state, $new_state) = @_;
-  my %old_ban_masks = map { ($_ => 1) } @{_state_array($old_state, 'ban_masks')};
-  my %new_ban_masks = map { ($_ => 1) } @{_state_array($new_state, 'ban_masks')};
+  my %old_ban_masks =
+    map { ($_ => 1) } @{_state_array($old_state, 'ban_masks')};
+  my %new_ban_masks =
+    map { ($_ => 1) } @{_state_array($new_state, 'ban_masks')};
   for my $ban_mask (sort keys %new_ban_masks) {
     if ($old_ban_masks{$ban_mask}) {
       next;
@@ -5092,8 +5508,10 @@ sub _apply_authoritative_topic_update {
 sub _authoritative_topic_changed {
   my ($old_topic, $new_topic) = @_;
   return 1 if $old_topic->{has_topic} != $new_topic->{has_topic};
-  return 1 if (($old_topic->{topic} // q{}) ne ($new_topic->{topic} // q{}));
-  return 1 if (($old_topic->{actor} // q{}) ne ($new_topic->{actor} // q{}));
+  return 1
+    if (($old_topic->{topic} // q{}) ne ($new_topic->{topic} // q{}));
+  return 1
+    if (($old_topic->{actor} // q{}) ne ($new_topic->{actor} // q{}));
   return 0;
 }
 
@@ -5121,13 +5539,17 @@ sub _broadcast_authoritative_join_updates {
 
 sub _added_authoritative_pubkeys {
   my ($diff) = @_;
-  my @pubkeys = sort grep { !$diff->{old_present}{$_} && $diff->{new_present}{$_} } keys %{$diff->{new_present}};
+  my @pubkeys =
+    sort grep { !$diff->{old_present}{$_} && $diff->{new_present}{$_} }
+    keys %{$diff->{new_present}};
   return @pubkeys;
 }
 
 sub _removed_authoritative_pubkeys {
   my ($diff) = @_;
-  my @pubkeys = sort grep { $diff->{old_present}{$_} && !$diff->{new_present}{$_} } keys %{$diff->{old_present}};
+  my @pubkeys =
+    sort grep { $diff->{old_present}{$_} && !$diff->{new_present}{$_} }
+    keys %{$diff->{old_present}};
   return @pubkeys;
 }
 
@@ -5193,7 +5615,8 @@ sub _broadcast_authoritative_part_update {
   my $actor_nick =
     @{$affected_client_ids}
     ? $self->{clients}{$affected_client_ids->[0]}{nick}
-    : ($self->_authoritative_nick_for_pubkey($pubkey) || $self->{config}{server_name});
+    : (  $self->_authoritative_nick_for_pubkey($pubkey)
+      || $self->{config}{server_name});
   my $line = sprintf(':%s PART %s', $actor_nick, $channel);
   $line = _line_with_reason($line, $event->{content});
   $self->_broadcast_channel_line($channel, $line);
@@ -5250,7 +5673,9 @@ sub _update_authoritative_channel_cache_with_event {
   my $old_view  = $cache->{view};
   my $old_state = $cache->{state};
   my $event_id =
-    defined($event->{id}) && !ref($event->{id}) && length($event->{id})
+       defined($event->{id})
+    && !ref($event->{id})
+    && length($event->{id})
     ? $event->{id}
     : undef;
   my $new_cache;
@@ -5367,7 +5792,9 @@ sub _userhost_entry_for_nick {
 
   my $display_nick = $client->{nick};
   my $username =
-    defined $client->{username} && !ref($client->{username}) && length($client->{username})
+       defined $client->{username}
+    && !ref($client->{username})
+    && length($client->{username})
     ? $client->{username}
     : $display_nick;
   my $host = $self->_presentational_host_for_client($client);
@@ -5400,7 +5827,10 @@ sub _whois_entry_for_nick {
       defined $client->{realname} && !ref($client->{realname}) && length($client->{realname}) ? $client->{realname}
       : $client->{nick}
     ),
-    (defined($client->{authority_pubkey}) ? (account => $client->{authority_pubkey}) : ()),
+    (
+      defined($client->{authority_pubkey}) ? (account => $client->{authority_pubkey})
+      : ()
+    ),
   };
 }
 
@@ -5464,7 +5894,8 @@ sub _list_entries {
 
 sub _refresh_list_authoritative_discovery {
   my ($self) = @_;
-  if ($self->_authority_relay_enabled && $self->_authority_profile eq 'nip29') {
+  if ( $self->_authority_relay_enabled
+    && $self->_authority_profile eq 'nip29') {
     $self->_refresh_authoritative_discovery_cache(refresh => 1);
   }
   return 1;
@@ -5477,7 +5908,9 @@ sub _list_channels {
     $channels{$channel} = 1;
   }
   my @channels = sort keys %channels;
-  if (defined $target && length($target) && $self->_is_channel_name($target)) {
+  if ( defined $target
+    && length($target)
+    && $self->_is_channel_name($target)) {
     return $self->_filter_list_channels_by_target(\@channels, $target);
   }
   return @channels;
@@ -5562,7 +5995,9 @@ sub _authoritative_list_view_hidden {
 
 sub _authoritative_list_visible_users {
   my ($self, $channel, $list_view, $view, $state) = @_;
-  if (ref($list_view) eq 'HASH' && defined($list_view->{visible_users}) && !ref($list_view->{visible_users})) {
+  if ( ref($list_view) eq 'HASH'
+    && defined($list_view->{visible_users})
+    && !ref($list_view->{visible_users})) {
     return $list_view->{visible_users};
   }
   if (ref($view) eq 'HASH' && ref($view->{present_members}) eq 'ARRAY') {
@@ -5576,7 +6011,8 @@ sub _authoritative_list_visible_users {
 
 sub _authoritative_list_display_channel {
   my ($self, $channel, $list_view, $state) = @_;
-  if (ref($list_view) eq 'HASH' && _nonempty_scalar($list_view->{channel})) {
+  if (ref($list_view) eq 'HASH'
+    && _nonempty_scalar($list_view->{channel})) {
     return $list_view->{channel};
   }
   if (ref($state) eq 'HASH' && _nonempty_scalar($state->{channel_name})) {
@@ -5596,7 +6032,9 @@ sub _authoritative_list_topic {
   if (ref($view) eq 'HASH' && exists($view->{topic})) {
     return $view->{topic};
   }
-  if (ref($state) eq 'HASH' && defined($state->{topic_text}) && !ref($state->{topic_text})) {
+  if ( ref($state) eq 'HASH'
+    && defined($state->{topic_text})
+    && !ref($state->{topic_text})) {
     return $state->{topic_text};
   }
   return q{};
@@ -5616,7 +6054,8 @@ sub _local_list_entry_for_channel {
 
 sub _visible_users_for_channel_state {
   my ($self, $channel, $state) = @_;
-  my %presented_nicks = map { $_ => 1 } $self->_visible_nicks_for_channel($channel);
+  my %presented_nicks =
+    map { $_ => 1 } $self->_visible_nicks_for_channel($channel);
   for my $client_id (keys %{$state->{members} || {}}) {
     my $member_client = $self->{clients}{$client_id};
     if (!_list_member_client_is_visible($member_client)) {
@@ -5800,7 +6239,13 @@ sub _disconnect_client {
       $line .= ' :' . $args{reason};
     }
     $self->_send_line_to_client_ids(
-      [$self->_shared_client_ids_for_channels(\@channels, exclude_client_id => $client_id)], $line,);
+      [
+        $self->_shared_client_ids_for_channels(
+          \@channels, exclude_client_id => $client_id
+        )
+      ],
+      $line,
+    );
 
     for my $channel (@channels) {
       $self->_remove_client_from_channel($client_id, $channel, nick => $client->{nick},);
@@ -5876,7 +6321,9 @@ sub _render_subscription_item {
     );
   }
 
-  if ($context->{object_type} eq 'irc.network' && $item_type eq 'event' && $context->{event_type} eq 'irc.nick') {
+  if ( $context->{object_type} eq 'irc.network'
+    && $item_type eq 'event'
+    && $context->{event_type} eq 'irc.nick') {
     return $self->_render_network_nick_subscription_item($context);
   }
 
@@ -6026,7 +6473,8 @@ sub _render_network_nick_subscription_item {
   }
 
   my $body = $context->{body};
-  if (!_nonempty_scalar($body->{old_nick}) || !_nonempty_scalar($body->{new_nick})) {
+  if ( !_nonempty_scalar($body->{old_nick})
+    || !_nonempty_scalar($body->{new_nick})) {
     return;
   }
 
@@ -6252,7 +6700,8 @@ sub _maybe_track_originating_channel_event {
   if (!_originating_channel_event_should_be_tracked($tags, $originating_client_id)) {
     return 1;
   }
-  $self->{subscription_event_origin_client_ids}{$signed->{id}} = $originating_client_id;
+  $self->{subscription_event_origin_client_ids}{$signed->{id}} =
+    $originating_client_id;
   return 1;
 }
 
@@ -6518,7 +6967,8 @@ sub _opaque_private_message_wrap {
   }
 
   my @recipient_tags = grep { ref eq 'ARRAY' && @{$_} >= 2 && $_->[0] eq 'p' } @{$wrap->tags || []};
-  if (@recipient_tags != 1 || ($recipient_tags[0][1] || q{}) ne $recipient->{e2ee_pubkey}) {
+  if (@recipient_tags != 1
+    || ($recipient_tags[0][1] || q{}) ne $recipient->{e2ee_pubkey}) {
     $self->_send_server_notice($client->{id},
       'Opaque private-message transport recipient does not match the target nick');
     return 0;
@@ -6648,16 +7098,19 @@ sub _process_request_wait_message {
     $self->_restore_deferred_messages($deferred_messages);
     return {result => _runtime_request_response_result($message, $args{id}, $method),};
   }
-  if (($message->{type} || q{}) eq 'request' && ($message->{method} || q{}) eq 'runtime.shutdown') {
+  if ( ($message->{type} || q{}) eq 'request'
+    && ($message->{method} || q{}) eq 'runtime.shutdown') {
     $self->_restore_deferred_messages($deferred_messages);
     $self->_handle_runtime_shutdown($message);
     croak '__shutdown__';
   }
-  if (($message->{type} || q{}) eq 'notification' && ($message->{method} || q{}) eq 'runtime.fatal') {
+  if ( ($message->{type} || q{}) eq 'notification'
+    && ($message->{method} || q{}) eq 'runtime.fatal') {
     $self->_restore_deferred_messages($deferred_messages);
     croak "runtime fatal: " . ($message->{params}{code} || 'unknown');
   }
-  if (($message->{type} || q{}) eq 'notification' && ($message->{method} || q{}) eq 'runtime.subscription_event') {
+  if ( ($message->{type} || q{}) eq 'notification'
+    && ($message->{method} || q{}) eq 'runtime.subscription_event') {
     push @{$deferred_messages}, $message;
     return {deferred => 1,};
   }
@@ -6717,16 +7170,19 @@ sub _drain_pending_runtime_messages {
     my $message = shift @{$self->{pending_messages}};
     $count++;
 
-    if (($message->{type} || q{}) eq 'request' && ($message->{method} || q{}) eq 'runtime.shutdown') {
+    if ( ($message->{type} || q{}) eq 'request'
+      && ($message->{method} || q{}) eq 'runtime.shutdown') {
       $self->_handle_runtime_shutdown($message);
       next;
     }
 
-    if (($message->{type} || q{}) eq 'notification' && ($message->{method} || q{}) eq 'runtime.fatal') {
+    if ( ($message->{type} || q{}) eq 'notification'
+      && ($message->{method} || q{}) eq 'runtime.fatal') {
       croak "runtime fatal: " . ($message->{params}{code} || 'unknown') . "\n";
     }
 
-    if (($message->{type} || q{}) eq 'notification' && ($message->{method} || q{}) eq 'runtime.subscription_event') {
+    if ( ($message->{type} || q{}) eq 'notification'
+      && ($message->{method} || q{}) eq 'runtime.subscription_event') {
       $self->_handle_subscription_event($message->{params} || {});
       next;
     }
@@ -7022,7 +7478,8 @@ sub _visible_nicks_for_channel {
   my @nicks =
     sort grep { defined && length }
     map       { $state->{visible_nicks}{$_}{display_nick} }
-    grep      { ($state->{visible_nicks}{$_}{count} || 0) > 0 } keys %{$state->{visible_nicks} || {}};
+    grep      { ($state->{visible_nicks}{$_}{count} || 0) > 0 }
+    keys %{$state->{visible_nicks} || {}};
   return @nicks;
 }
 
@@ -7053,7 +7510,8 @@ sub _send_names_list {
   if (!@nicks) {
     @nicks = $self->_visible_nicks_for_channel($display_channel);
     my $client_present = scalar grep { defined $_ && defined $client->{nick} && $_ eq $client->{nick} } @nicks;
-    if (!$client_present && defined $self->_client_joined_channel_name($client, $display_channel)) {
+    if (!$client_present
+      && defined $self->_client_joined_channel_name($client, $display_channel)) {
       push @nicks, $client->{nick};
       @nicks = sort @nicks;
     }
@@ -7178,7 +7636,13 @@ sub _broadcast_channel_line {
   my $state = $self->{channels}{$channel_key}
     or return 0;
 
-  return $self->_send_line_to_client_ids([grep { exists $self->{clients}{$_} } sort keys %{$state->{members}}], $line,);
+  return $self->_send_line_to_client_ids(
+    [
+      grep { exists $self->{clients}{$_} }
+      sort keys %{$state->{members}}
+    ],
+    $line,
+  );
 }
 
 sub _shared_client_ids_for_channels {
@@ -7194,7 +7658,9 @@ sub _shared_client_ids_for_channels {
     my $state = $self->{channels}{$channel_key}
       or next;
     for my $client_id (keys %{$state->{members} || {}}) {
-      next if defined $args{exclude_client_id} && $client_id eq $args{exclude_client_id};
+      next
+        if defined $args{exclude_client_id}
+        && $client_id eq $args{exclude_client_id};
       if (!(exists $self->{clients}{$client_id})) {
         next;
       }
@@ -7264,7 +7730,9 @@ sub _send_client_line {
   while ($offset < length $payload) {
     my $written = syswrite($client->{socket}, $payload, length($payload) - $offset, $offset);
     if (!defined $written) {
-      if ($OS_ERROR{EPIPE} || $OS_ERROR{ECONNRESET} || $OS_ERROR{ENOTCONN}) {
+      if ( $OS_ERROR{EPIPE}
+        || $OS_ERROR{ECONNRESET}
+        || $OS_ERROR{ENOTCONN}) {
         $self->_disconnect_client($client_id);
         return 0;
       }

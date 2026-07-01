@@ -1,6 +1,7 @@
 package Overnet::Program::IRC::Script::ChatClient;
 
 use strictures 2;
+use Moo;
 use Carp         qw(croak);
 use English      qw(-no_match_vars);
 use Getopt::Long qw(GetOptionsFromArray);
@@ -12,6 +13,68 @@ use Overnet::Program::IRC::Script::Util
   qw(checked_close checked_print checked_print_stderr checked_print_stdout validate_port);
 
 our $VERSION = '0.001';
+
+has options => (
+  is      => 'ro',
+  reader  => '_options',
+  default => sub { {} },
+);
+has input => (
+  is      => 'ro',
+  reader  => '_input',
+  default => sub { \*STDIN },
+);
+has output => (
+  is      => 'ro',
+  reader  => '_output',
+  default => sub { \*STDOUT },
+);
+has error => (
+  is      => 'ro',
+  reader  => '_error',
+  default => sub { \*STDERR },
+);
+has socket_buffer => (
+  is      => 'rw',
+  reader  => '_socket_buffer',
+  writer  => '_set_socket_buffer',
+  default => sub {q{}},
+);
+has done => (
+  is      => 'rw',
+  reader  => '_done',
+  writer  => '_set_done',
+  default => sub {0},
+);
+has registered => (
+  is      => 'rw',
+  reader  => '_registered',
+  writer  => '_set_registered',
+  default => sub {0},
+);
+has auto_join_sent => (
+  is      => 'rw',
+  reader  => '_auto_join_sent',
+  writer  => '_set_auto_join_sent',
+  default => sub {0},
+);
+has current_target => (
+  is     => 'rw',
+  reader => '_current_target',
+  writer => '_set_current_target',
+);
+has socket => (
+  is     => 'rw',
+  reader => '_socket',
+  writer => '_set_socket',
+);
+has selector => (
+  is     => 'rw',
+  reader => '_selector',
+  writer => '_set_selector',
+);
+
+no Moo;
 
 sub run {
   my ($class, @argv) = @_;
@@ -54,30 +117,16 @@ sub run {
   }
 
   _validate_options(\%options);
-  my $client = $class->_new(%options);
-  $client->_connect;
-  $client->_run;
-  return 0;
-}
-
-sub _new {
-  my ($class, %options) = @_;
-
   if (!defined $options{username} || !length($options{username})) {
     $options{username} = $options{nick};
   }
-
-  return bless {
+  my $client = $class->new(
     options        => \%options,
-    input          => \*STDIN,
-    output         => \*STDOUT,
-    error          => \*STDERR,
-    socket_buffer  => q{},
-    done           => 0,
-    registered     => 0,
-    auto_join_sent => 0,
     current_target => $options{channel},
-  }, $class;
+  );
+  $client->_connect;
+  $client->_run;
+  return 0;
 }
 
 sub _validate_options {
@@ -153,8 +202,10 @@ sub _tls_socket_args {
   my $options = $self->{options};
 
   my @args = (
-    SSL_verify_mode => $options->{tls_no_verify} ? SSL_VERIFY_NONE() : SSL_VERIFY_PEER(),
-    SSL_hostname    => _tls_hostname($options),
+    SSL_verify_mode => $options->{tls_no_verify}
+    ? SSL_VERIFY_NONE()
+    : SSL_VERIFY_PEER(),
+    SSL_hostname => _tls_hostname($options),
   );
 
   if (defined $options->{tls_ca_file} && length($options->{tls_ca_file})) {
@@ -170,7 +221,8 @@ sub _tls_socket_args {
 
 sub _tls_hostname {
   my ($options) = @_;
-  if (defined $options->{tls_server_name} && length($options->{tls_server_name})) {
+  if (defined $options->{tls_server_name}
+    && length($options->{tls_server_name})) {
     return $options->{tls_server_name};
   }
   return $options->{host};
@@ -280,10 +332,11 @@ sub _handle_server_line {
 }
 
 sub _send_auto_join {
-  my ($self)     = @_;
-  my $options    = $self->{options};
-  my $can_join   = $options->{auto_join}       && !$self->{auto_join_sent};
-  my $has_target = defined $options->{channel} && length($options->{channel});
+  my ($self)   = @_;
+  my $options  = $self->{options};
+  my $can_join = $options->{auto_join} && !$self->{auto_join_sent};
+  my $has_target =
+    defined $options->{channel} && length($options->{channel});
 
   if ($can_join && $has_target) {
     $self->_send_line('JOIN ' . $options->{channel});

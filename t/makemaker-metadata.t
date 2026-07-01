@@ -33,6 +33,7 @@ is(
   {
     'IO::Socket::SSL' => 0,
     'JSON'            => 0,
+    'Moo'             => 0,
     'Net::Nostr'      => 0,
     'Overnet'         => 0.001,
     'Overnet::Relay'  => 0.001,

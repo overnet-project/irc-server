@@ -1,8 +1,21 @@
 package TestSubscriptionServer;
 
 use strictures 2;
+use Moo;
 
-use parent 'Overnet::Program::IRC::Server';
+extends 'Overnet::Program::IRC::Server';
+
+has render_client_ids => (
+  is     => 'ro',
+  reader => '_render_client_ids',
+);
+has sent_lines => (
+  is      => 'ro',
+  reader  => '_sent_lines',
+  default => sub { [] },
+);
+
+no Moo;
 
 sub _render_subscription_item {
   my ($self, %args) = @_;
