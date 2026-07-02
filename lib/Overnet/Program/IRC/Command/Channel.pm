@@ -4,6 +4,13 @@ use strictures 2;
 
 our $VERSION = '0.001';
 
+my %OVERNETCHANNEL_HANDLERS = (
+  DELETE   => \&_handle_overnetchannel_delete,
+  UNDELETE => \&_handle_overnetchannel_undelete,
+  INVITES  => \&_handle_overnetchannel_invites,
+  REQUESTS => \&_handle_overnetchannel_requests,
+);
+
 sub handle_overnetchannel {
   my ($server, $client_id, $params) = @_;
   my @params = @{$params || []};
@@ -18,13 +25,7 @@ sub handle_overnetchannel {
   }
 
   my $subcommand = uc($params[0]);
-  my %handlers   = (
-    DELETE   => \&_handle_overnetchannel_delete,
-    UNDELETE => \&_handle_overnetchannel_undelete,
-    INVITES  => \&_handle_overnetchannel_invites,
-    REQUESTS => \&_handle_overnetchannel_requests,
-  );
-  my $handler = $handlers{$subcommand};
+  my $handler    = $OVERNETCHANNEL_HANDLERS{$subcommand};
   if (defined $handler) {
     return $handler->($server, $client_id, \@params);
   }

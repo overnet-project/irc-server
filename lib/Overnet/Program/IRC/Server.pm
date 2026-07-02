@@ -876,33 +876,41 @@ sub _handle_client_line {
   return $self->_handle_registered_command($client_id, $client, $command, \@params);
 }
 
+my %CONNECTION_COMMAND_HANDLERS = (
+  CAP => sub {
+    my ($self, $client_id, $client, $command, $params) = @_;
+    return Overnet::Program::IRC::Command::Auth::handle_cap($self, $client_id, $params,);
+  },
+  NICK => sub {
+    my ($self, $client_id, $client, $command, $params) = @_;
+    return $self->_handle_nick_command($client_id, $client, $params);
+  },
+  USER => sub {
+    my ($self, $client_id, $client, $command, $params) = @_;
+    return $self->_handle_user_command($client_id, $client, $params);
+  },
+  PING => sub {
+    my ($self, $client_id, $client, $command, $params) = @_;
+    return $self->_handle_ping_command($client_id, $params);
+  },
+  AUTHENTICATE => sub {
+    my ($self, $client_id, $client, $command, $params) = @_;
+    return Overnet::Program::IRC::Command::Auth::handle_authenticate($self, $client_id, $params,);
+  },
+  QUIT => sub {
+    my ($self, $client_id, $client, $command, $params) = @_;
+    return $self->_handle_quit_command($client_id, $params);
+  },
+);
+
 sub _handle_connection_command {
   my ($self, $client_id, $client, $command, $params) = @_;
-  my %handlers;
-  $handlers{CAP} = sub {
-    return Overnet::Program::IRC::Command::Auth::handle_cap($self, $client_id, $params,);
-  };
-  $handlers{NICK} = sub {
-    return $self->_handle_nick_command($client_id, $client, $params);
-  };
-  $handlers{USER} = sub {
-    return $self->_handle_user_command($client_id, $client, $params);
-  };
-  $handlers{PING} = sub {
-    return $self->_handle_ping_command($client_id, $params);
-  };
-  $handlers{AUTHENTICATE} = sub {
-    return Overnet::Program::IRC::Command::Auth::handle_authenticate($self, $client_id, $params,);
-  };
-  $handlers{QUIT} = sub {
-    return $self->_handle_quit_command($client_id, $params);
-  };
 
-  my $handler = $handlers{$command};
+  my $handler = $CONNECTION_COMMAND_HANDLERS{$command};
   if (!(defined $handler)) {
     return;
   }
-  return $handler->();
+  return $handler->($self, $client_id, $client, $command, $params);
 }
 
 sub _handle_nick_command {
@@ -1039,65 +1047,84 @@ sub _handle_unregistered_command {
   return 1;
 }
 
-sub _handle_registered_command {
-  my ($self, $client_id, $client, $command, $params) = @_;
-  my %handlers;
-  $handlers{OVERNETKEY} = sub {
+my %REGISTERED_COMMAND_HANDLERS = (
+  OVERNETKEY => sub {
+    my ($self, $client_id, $client, $command, $params) = @_;
     return $self->_handle_overnetkey_command($client_id, $client, $params);
-  };
-  $handlers{OVERNETAUTH} = sub {
+  },
+  OVERNETAUTH => sub {
+    my ($self, $client_id, $client, $command, $params) = @_;
     return Overnet::Program::IRC::Command::Auth::handle_overnetauth($self, $client_id, $params,);
-  };
-  $handlers{OVERNETCHANNEL} = sub {
+  },
+  OVERNETCHANNEL => sub {
+    my ($self, $client_id, $client, $command, $params) = @_;
     return Overnet::Program::IRC::Command::Channel::handle_overnetchannel($self, $client_id, $params,);
-  };
-  $handlers{USERHOST} = sub {
+  },
+  USERHOST => sub {
+    my ($self, $client_id, $client, $command, $params) = @_;
     return $self->_handle_userhost_command($client_id, $params);
-  };
-  $handlers{WHO} = sub {
+  },
+  WHO => sub {
+    my ($self, $client_id, $client, $command, $params) = @_;
     return $self->_handle_who_command($client_id, $client, $params);
-  };
-  $handlers{WHOIS} = sub {
+  },
+  WHOIS => sub {
+    my ($self, $client_id, $client, $command, $params) = @_;
     return $self->_handle_whois_command($client_id, $params);
-  };
-  $handlers{MODE} = sub {
+  },
+  MODE => sub {
+    my ($self, $client_id, $client, $command, $params) = @_;
     return Overnet::Program::IRC::Command::Channel::handle_mode($self, $client_id, $params,);
-  };
-  $handlers{KICK} = sub {
+  },
+  KICK => sub {
+    my ($self, $client_id, $client, $command, $params) = @_;
     return Overnet::Program::IRC::Command::Channel::handle_kick($self, $client_id, $params,);
-  };
-  $handlers{INVITE} = sub {
+  },
+  INVITE => sub {
+    my ($self, $client_id, $client, $command, $params) = @_;
     return Overnet::Program::IRC::Command::Channel::handle_invite($self, $client_id, $params,);
-  };
-  $handlers{JOIN} = sub {
+  },
+  JOIN => sub {
+    my ($self, $client_id, $client, $command, $params) = @_;
     return Overnet::Program::IRC::Command::Channel::handle_join($self, $client_id, $params,);
-  };
-  $handlers{NAMES} = sub {
+  },
+  NAMES => sub {
+    my ($self, $client_id, $client, $command, $params) = @_;
     return $self->_handle_names_command($client_id, $params);
-  };
-  $handlers{PART} = sub {
+  },
+  PART => sub {
+    my ($self, $client_id, $client, $command, $params) = @_;
     return Overnet::Program::IRC::Command::Channel::handle_part($self, $client_id, $params,);
-  };
-  $handlers{PRIVMSG} = sub {
+  },
+  PRIVMSG => sub {
+    my ($self, $client_id, $client, $command, $params) = @_;
     return Overnet::Program::IRC::Command::Channel::handle_privmsg_or_notice($self, $client_id, $command, $params,);
-  };
-  $handlers{NOTICE} = sub {
+  },
+  NOTICE => sub {
+    my ($self, $client_id, $client, $command, $params) = @_;
     return Overnet::Program::IRC::Command::Channel::handle_privmsg_or_notice($self, $client_id, $command, $params,);
-  };
-  $handlers{TOPIC} = sub {
+  },
+  TOPIC => sub {
+    my ($self, $client_id, $client, $command, $params) = @_;
     return Overnet::Program::IRC::Command::Channel::handle_topic($self, $client_id, $params,);
-  };
-  $handlers{LUSERS} = sub {
+  },
+  LUSERS => sub {
+    my ($self, $client_id, $client, $command, $params) = @_;
     $self->_send_lusers_reply($client_id);
     return 1;
-  };
-  $handlers{LIST} = sub {
+  },
+  LIST => sub {
+    my ($self, $client_id, $client, $command, $params) = @_;
     return Overnet::Program::IRC::Command::Channel::handle_list($self, $client_id, $params,);
-  };
+  },
+);
 
-  my $handler = $handlers{$command};
+sub _handle_registered_command {
+  my ($self, $client_id, $client, $command, $params) = @_;
+
+  my $handler = $REGISTERED_COMMAND_HANDLERS{$command};
   if (defined $handler) {
-    return $handler->();
+    return $handler->($self, $client_id, $client, $command, $params);
   }
 
   $self->_send_unknown_command($client_id, $command);

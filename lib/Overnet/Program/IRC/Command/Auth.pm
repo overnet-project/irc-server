@@ -10,6 +10,12 @@ use Overnet::Program::IRC::Renderer ();
 
 our $VERSION = '0.001';
 
+my %OVERNETAUTH_HANDLERS = (
+  CHALLENGE => \&_handle_overnetauth_challenge,
+  AUTH      => \&_handle_overnetauth_auth,
+  DELEGATE  => \&_handle_overnetauth_delegate,
+);
+
 sub handle_cap {
   my ($server, $client_id, $params) = @_;
   my @params     = @{$params || []};
@@ -132,12 +138,7 @@ sub handle_overnetauth {
   }
 
   my $subcommand = uc($params[0]);
-  my %handlers   = (
-    CHALLENGE => \&_handle_overnetauth_challenge,
-    AUTH      => \&_handle_overnetauth_auth,
-    DELEGATE  => \&_handle_overnetauth_delegate,
-  );
-  my $handler = $handlers{$subcommand};
+  my $handler    = $OVERNETAUTH_HANDLERS{$subcommand};
   if (defined $handler) {
     return $handler->($server, $client_id, $client, \@params);
   }
