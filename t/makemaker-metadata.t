@@ -50,7 +50,7 @@ is(
     'bin/overnet-irc-auth.pl',            'bin/overnet-irc-authority-relay-service.pl',
     'bin/overnet-irc-authority-relay.pl', 'bin/overnet-irc-chat-client.pl',
     'bin/overnet-irc-local-server.pl',    'bin/overnet-irc-server.pl',
-    'bin/overnet-irc-service.pl',
+    'bin/overnet-irc-service.pl',         'bin/overnet-irc-proxy.pl',
   ],
   'installable IRC scripts are explicit',
 );
@@ -76,6 +76,10 @@ is(
         t/bin-syntax.t
         t/irc-auth-cli.t
         t/irc-auth-helper.t
+        t/irc-proxy-cli.t
+        t/irc-proxy-runner.t
+        t/irc-proxy-smoke.t
+        t/irc-proxy.t
         t/makemaker-metadata.t
         t/manifest-skip-policy.t
         t/readme-auth.t

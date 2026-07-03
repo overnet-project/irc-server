@@ -19,6 +19,8 @@ like $content, qr/OVERNET_AUTH_SOCK/mx,            'README documents OVERNET_AUT
 like $content, qr/--auth-sock/mx,                  'README documents the explicit auth socket override';
 like $content, qr/overnet-irc-auth\.pl\ auth/mx,   'README documents the IRC auth helper';
 like $content, qr/overnet-irc-auth\.pl\ bridge/mx, 'README documents bridge mode';
+like $content, qr/overnet-irc-proxy\.pl/mx,        'README documents the local IRC proxy';
+like $content, qr/--auto-delegate/mx,              'README documents proxy auto-delegation';
 like $content, qr/stdin/imx,                       'README documents stdin usage for bridge mode';
 like $content, qr/SASL/imx,                        'README documents SASL auth flow';
 like $content, qr/AUTHENTICATE/mx,                 'README documents AUTHENTICATE bridge usage';

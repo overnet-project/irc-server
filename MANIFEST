@@ -4,6 +4,7 @@ bin/overnet-irc-authority-relay-service.pl
 bin/overnet-irc-authority-relay.pl
 bin/overnet-irc-chat-client.pl
 bin/overnet-irc-local-server.pl
+bin/overnet-irc-proxy.pl
 bin/overnet-irc-server.pl
 bin/overnet-irc-service.pl
 deploy/canary/irc/overnet-irc.env.example
@@ -18,7 +19,9 @@ lib/Overnet/Program/IRC/Auth/Helper.pm
 lib/Overnet/Program/IRC/Authority/Coordinator.pm
 lib/Overnet/Program/IRC/Command/Auth.pm
 lib/Overnet/Program/IRC/Command/Channel.pm
+lib/Overnet/Program/IRC/Proxy.pm
 lib/Overnet/Program/IRC/Renderer.pm
+lib/Overnet/Program/IRC/Script/Proxy.pm
 lib/Overnet/Program/IRC/Server.pm
 LICENSE
 Makefile.PL
@@ -30,6 +33,10 @@ t/bin-syntax.t
 t/irc-auth-cli.t
 t/irc-auth-daemon-e2e.t
 t/irc-auth-helper.t
+t/irc-proxy-cli.t
+t/irc-proxy-runner.t
+t/irc-proxy-smoke.t
+t/irc-proxy.t
 t/makemaker-metadata.t
 t/manifest-skip-policy.t
 t/readme-auth.t

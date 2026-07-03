@@ -7,6 +7,7 @@ for my $module (
   Overnet::Program::IRC::Authority::Coordinator
   Overnet::Program::IRC::Command::Auth
   Overnet::Program::IRC::Command::Channel
+  Overnet::Program::IRC::Proxy
   Overnet::Program::IRC::Renderer
   Overnet::Program::IRC::Server
   )

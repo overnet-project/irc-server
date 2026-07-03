@@ -163,6 +163,28 @@ sub _bridge_line {
   );
 }
 
+sub consume_sasl_challenge_line {
+  my ($class, %args) = @_;
+  my $line = $args{line};
+  if (!(defined $line && !ref($line) && length($line))) {
+    croak "line is required\n";
+  }
+
+  my $chunk = $class->_maybe_parse_sasl_chunk($line);
+  if (!$chunk) {
+    return {
+      handled => 0,
+      lines   => [],
+    };
+  }
+
+  my @lines = $class->_consume_sasl_chunk(%args, chunk => $chunk->{chunk},);
+  return {
+    handled => 1,
+    lines   => \@lines,
+  };
+}
+
 sub _bridge_stream {
   my ($class, %args) = @_;
   my $input  = $args{input}  || \*STDIN;
@@ -387,6 +409,9 @@ sub _render_sasl_response {
   );
 
   if (_sasl_delegate_required($challenge_payload)) {
+    if (exists($args{auto_delegate}) && !$args{auto_delegate}) {
+      croak "SASL NOSTR delegation is disabled\n";
+    }
     my $delegate = _sasl_delegate_payload($challenge_payload);
     $response{delegate_event} = $class->_authorize_delegate_artifact(
       %args,
@@ -529,6 +554,12 @@ Version 0.001.
 =head1 SUBROUTINES/METHODS
 
 =head2 run
+
+=head2 consume_sasl_challenge_line
+
+Consumes one IRC C<AUTHENTICATE> line from a SASL NOSTR challenge stream and
+returns whether the line was handled plus any response lines that should be sent
+back to the IRC server.
 
 =head1 DIAGNOSTICS
 

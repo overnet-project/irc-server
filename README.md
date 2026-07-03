@@ -68,6 +68,19 @@ The same continuous bridge mode also handles SASL `NOSTR` server challenges. Fee
 some-irc-line-source | overnet-irc-auth.pl bridge
 ```
 
+For normal IRC clients, run the local proxy instead of doing the auth commands
+manually:
+
+```bash
+overnet-irc-proxy.pl --listen-port 16668 --server-host irc.example.test --server-port 6697 --server-tls
+```
+
+Then connect the IRC client to `127.0.0.1:16668`. The proxy handles upstream
+SASL `NOSTR` authentication with the auth agent and hides the challenge/response
+flow from the client. Relay delegation is automatic by default when the server
+challenge asks for it. Use `--auto-delegate` or `--no-auto-delegate` to make
+that behavior explicit.
+
 ## Client Commands
 
 ```text
