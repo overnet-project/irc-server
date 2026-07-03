@@ -118,11 +118,12 @@ sub _fill_defaults {
 sub _spawn_relay_child {
   my ($options) = @_;
 
-  my $program_path = File::Spec->catfile($FindBin::Bin, 'overnet-irc-authority-relay.pl');
+  my $program_path = File::Spec->catfile($FindBin::Bin, 'overnet-irc-server');
   return _spawn_child(
-    executable_name(), $program_path,          '--host',       $options->{host},
-    '--port',          $options->{port},       '--relay-url',  $options->{relay_url},
-    '--grant-kind',    $options->{grant_kind}, '--store-file', $options->{store_file},
+    executable_name(),     $program_path,  'authority-relay',      '--host',
+    $options->{host},      '--port',       $options->{port},       '--relay-url',
+    $options->{relay_url}, '--grant-kind', $options->{grant_kind}, '--store-file',
+    $options->{store_file},
   );
 }
 
@@ -290,7 +291,7 @@ sub _wait_for_relay_ready {
 
 sub _usage {
   return <<'USAGE';
-Usage: overnet-irc-authority-relay-service.pl [options]
+Usage: overnet-irc-server authority-relay-service [options]
 
   --host HOST
   --port PORT
@@ -311,7 +312,7 @@ Overnet::Program::IRC::Script::AuthorityRelayService - authoritative relay servi
 
 =head1 DESCRIPTION
 
-Runs the C<overnet-irc-authority-relay-service.pl> command-line service wrapper.
+Runs the C<overnet-irc-server authority-relay-service> command-line service wrapper.
 
 =head1 VERSION
 

@@ -238,7 +238,7 @@ sub _register_adapter {
 }
 
 sub _server_command {
-  my $program_path = File::Spec->catfile($FindBin::Bin, 'overnet-irc-server.pl');
+  my $program_path = File::Spec->catfile($FindBin::Bin, 'overnet-irc-server');
   my $dollar       = chr 36;
   my $at           = chr 64;
   my $double_quote = chr 34;
@@ -252,7 +252,7 @@ sub _server_command {
     . q{exec failed: }
     . $dollar . q{!}
     . $double_quote . q{;};
-  return [executable_name(), '-e', $child_wrapper, $program_path];
+  return [executable_name(), '-e', $child_wrapper, $program_path, 'server'];
 }
 
 sub _permissions {
@@ -397,7 +397,7 @@ sub _shutdown_host {
 
 sub _usage {
   return <<'USAGE';
-Usage: overnet-irc-service.pl [options]
+Usage: overnet-irc-server service [options]
 
   --adapter-id ID
   --network NAME
@@ -430,7 +430,7 @@ Overnet::Program::IRC::Script::Service - IRC service script runner
 
 =head1 DESCRIPTION
 
-Runs the C<overnet-irc-service.pl> command-line service wrapper.
+Runs the C<overnet-irc-server service> command-line service wrapper.
 
 =head1 VERSION
 

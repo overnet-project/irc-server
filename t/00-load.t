@@ -9,6 +9,7 @@ for my $module (
   Overnet::Program::IRC::Command::Channel
   Overnet::Program::IRC::Proxy
   Overnet::Program::IRC::Renderer
+  Overnet::Program::IRC::Script::Main
   Overnet::Program::IRC::Server
   )
 ) {

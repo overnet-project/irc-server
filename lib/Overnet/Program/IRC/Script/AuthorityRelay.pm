@@ -80,7 +80,7 @@ sub _validate_options {
 
 sub _usage {
   return <<'USAGE';
-Usage: overnet-irc-authority-relay.pl [options]
+Usage: overnet-irc-server authority-relay [options]
 
   --host HOST
   --port PORT
@@ -99,7 +99,7 @@ Overnet::Program::IRC::Script::AuthorityRelay - authoritative IRC relay script r
 
 =head1 DESCRIPTION
 
-Runs the C<overnet-irc-authority-relay.pl> command-line relay launcher.
+Runs the C<overnet-irc-server authority-relay> command-line relay launcher.
 
 =head1 VERSION
 

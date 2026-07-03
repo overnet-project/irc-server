@@ -1,14 +1,25 @@
 package Overnet::Program::IRC::Script::Server;
 
 use strictures 2;
-use Carp    qw(croak);
-use English qw(-no_match_vars);
+use Carp                                qw(croak);
+use English                             qw(-no_match_vars);
+use Overnet::Program::IRC::Script::Util qw(checked_print_stderr checked_print_stdout);
 use Overnet::Program::IRC::Server;
 
 our $VERSION = '0.001';
 
 sub run {
-  my ($class) = @_;
+  my ($class, @argv) = @_;
+
+  if (@argv && $argv[0] eq '--help') {
+    checked_print_stdout(_usage());
+    return 0;
+  }
+
+  if (@argv) {
+    checked_print_stderr(_usage());
+    return 1;
+  }
 
   my $server = Overnet::Program::IRC::Server->new;
   my $ok     = eval {
@@ -21,6 +32,13 @@ sub run {
   }
 
   return 0;
+}
+
+sub _usage {
+  return <<'USAGE';
+Usage:
+  overnet-irc-server server
+USAGE
 }
 
 sub _is_shutdown_error {
@@ -39,7 +57,7 @@ Overnet::Program::IRC::Script::Server - IRC server script runner
 
 =head1 DESCRIPTION
 
-Runs the C<overnet-irc-server.pl> program entry point.
+Runs the C<overnet-irc-server server> program entry point.
 
 =head1 VERSION
 

@@ -535,7 +535,7 @@ HELP
 sub _usage {
   return <<'USAGE';
 Usage:
-  perl irc-server/bin/overnet-irc-chat-client.pl --nick NICK [options]
+  perl irc-server/bin/overnet-irc-server chat-client --nick NICK [options]
 
 Options:
   --host HOST        IRC server host (default: 127.0.0.1)
@@ -578,7 +578,7 @@ Overnet::Program::IRC::Script::ChatClient - IRC demo chat client script runner
 
 =head1 DESCRIPTION
 
-Runs the C<overnet-irc-chat-client.pl> command-line demo client.
+Runs the C<overnet-irc-server chat-client> command-line demo client.
 
 =head1 VERSION
 

@@ -348,7 +348,7 @@ sub _close_socket {
 sub _usage {
   return <<'USAGE';
 Usage:
-  overnet-irc-proxy.pl [options]
+  overnet-irc-server proxy [options]
 
 Proxy options:
   --listen-host HOST          Local listen host (default: 127.0.0.1)
@@ -387,7 +387,7 @@ Overnet::Program::IRC::Script::Proxy - Local IRC proxy script runner
 
 =head1 DESCRIPTION
 
-Runs C<overnet-irc-proxy.pl>, a local line-oriented IRC proxy that performs
+Runs C<overnet-irc-server proxy>, a local line-oriented IRC proxy that performs
 upstream SASL NOSTR authentication with the Overnet auth agent.
 
 =head1 VERSION

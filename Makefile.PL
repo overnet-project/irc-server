@@ -27,19 +27,15 @@ WriteMakefile(
     'Overnet::Relay'  => 0.001,
     'strictures'      => 2,
   },
-  EXE_FILES => [
-    'bin/overnet-irc-auth.pl',            'bin/overnet-irc-authority-relay-service.pl',
-    'bin/overnet-irc-authority-relay.pl', 'bin/overnet-irc-chat-client.pl',
-    'bin/overnet-irc-local-server.pl',    'bin/overnet-irc-server.pl',
-    'bin/overnet-irc-service.pl',         'bin/overnet-irc-proxy.pl',
-  ],
-  test => {
+  EXE_FILES => ['bin/overnet-irc-server'],
+  test      => {
     TESTS => join(
       $space,
       qw(
         t/00-load.t
         t/bin-syntax.t
         t/irc-auth-cli.t
+        t/irc-main-cli.t
         t/irc-auth-helper.t
         t/irc-proxy-cli.t
         t/irc-proxy-runner.t

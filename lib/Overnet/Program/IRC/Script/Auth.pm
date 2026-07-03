@@ -99,9 +99,9 @@ sub _valid_command {
 sub _usage {
   return <<'USAGE';
 Usage:
-  overnet-irc-auth.pl auth [options]
-  overnet-irc-auth.pl delegate [options]
-  overnet-irc-auth.pl bridge [options]
+  overnet-irc-server auth auth [options]
+  overnet-irc-server auth delegate [options]
+  overnet-irc-server auth bridge [options]
 
 Auth-agent options:
   --auth-sock PATH
@@ -146,7 +146,7 @@ Overnet::Program::IRC::Script::Auth - IRC auth helper script runner
 
 =head1 DESCRIPTION
 
-Runs the C<overnet-irc-auth.pl> command-line helper.
+Runs the C<overnet-irc-server auth> command-line helper.
 
 =head1 VERSION
 

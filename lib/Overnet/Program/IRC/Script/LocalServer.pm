@@ -176,7 +176,7 @@ sub _register_adapter {
 }
 
 sub _server_command {
-  my $program_path = File::Spec->catfile($FindBin::Bin, 'overnet-irc-server.pl');
+  my $program_path = File::Spec->catfile($FindBin::Bin, 'overnet-irc-server');
   my $dollar       = chr 36;
   my $at           = chr 64;
   my $double_quote = chr 34;
@@ -190,7 +190,7 @@ sub _server_command {
     . q{exec failed: }
     . $dollar . q{!}
     . $double_quote . q{;};
-  return [executable_name(), '-e', $child_wrapper, $program_path];
+  return [executable_name(), '-e', $child_wrapper, $program_path, 'server'];
 }
 
 sub _permissions {
@@ -238,9 +238,9 @@ sub _run_host {
 sub _print_ready_message {
   my ($ready_details, $signing_key_file, $tls_config) = @_;
 
-  my $client_script = abs_path(File::Spec->catfile($FindBin::Bin, 'overnet-irc-chat-client.pl'));
+  my $client_script = abs_path(File::Spec->catfile($FindBin::Bin, 'overnet-irc-server'));
   if (!$client_script) {
-    $client_script = File::Spec->catfile($FindBin::Bin, 'overnet-irc-chat-client.pl');
+    $client_script = File::Spec->catfile($FindBin::Bin, 'overnet-irc-server');
   }
 
   checked_print_stdout(
@@ -279,8 +279,8 @@ sub _print_client_instructions {
   checked_print_stdout(
     "\n",
     "Open two more terminals and run:\n",
-    "  $perl $client_script --nick alice --port $ready_details->{listen_port}$tls_suffix\n",
-    "  $perl $client_script --nick bob --port $ready_details->{listen_port}$tls_suffix\n",
+    "  $perl $client_script chat-client --nick alice --port $ready_details->{listen_port}$tls_suffix\n",
+    "  $perl $client_script chat-client --nick bob --port $ready_details->{listen_port}$tls_suffix\n",
     "\n",
     "The client auto-joins #overnet. Plain text sends to the current target.\n",
   );
@@ -345,7 +345,7 @@ sub _shutdown_host {
 sub _usage {
   return <<'USAGE';
 Usage:
-  perl irc-server/bin/overnet-irc-local-server.pl [options]
+  perl irc-server/bin/overnet-irc-server local-server [options]
 
 Options:
   --adapter-id ID         Adapter id to register and use (default: irc.local)
@@ -374,7 +374,7 @@ Overnet::Program::IRC::Script::LocalServer - local IRC demo server script runner
 
 =head1 DESCRIPTION
 
-Runs the C<overnet-irc-local-server.pl> command-line local demo server.
+Runs the C<overnet-irc-server local-server> command-line local demo server.
 
 =head1 VERSION
 

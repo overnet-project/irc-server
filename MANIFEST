@@ -1,12 +1,5 @@
 .gitignore
-bin/overnet-irc-auth.pl
-bin/overnet-irc-authority-relay-service.pl
-bin/overnet-irc-authority-relay.pl
-bin/overnet-irc-chat-client.pl
-bin/overnet-irc-local-server.pl
-bin/overnet-irc-proxy.pl
-bin/overnet-irc-server.pl
-bin/overnet-irc-service.pl
+bin/overnet-irc-server
 deploy/canary/irc/overnet-irc.env.example
 deploy/canary/README.md
 deploy/canary/relay-a/overnet-irc-authority-relay.env.example
@@ -21,8 +14,17 @@ lib/Overnet/Program/IRC/Command/Auth.pm
 lib/Overnet/Program/IRC/Command/Channel.pm
 lib/Overnet/Program/IRC/Proxy.pm
 lib/Overnet/Program/IRC/Renderer.pm
+lib/Overnet/Program/IRC/Script/Auth.pm
+lib/Overnet/Program/IRC/Script/AuthorityRelay.pm
+lib/Overnet/Program/IRC/Script/AuthorityRelayService.pm
+lib/Overnet/Program/IRC/Script/ChatClient.pm
+lib/Overnet/Program/IRC/Script/LocalServer.pm
+lib/Overnet/Program/IRC/Script/Main.pm
 lib/Overnet/Program/IRC/Script/Proxy.pm
 lib/Overnet/Program/IRC/Server.pm
+lib/Overnet/Program/IRC/Script/Server.pm
+lib/Overnet/Program/IRC/Script/Service.pm
+lib/Overnet/Program/IRC/Script/Util.pm
 LICENSE
 Makefile.PL
 MANIFEST			This list of files
@@ -33,6 +35,7 @@ t/bin-syntax.t
 t/irc-auth-cli.t
 t/irc-auth-daemon-e2e.t
 t/irc-auth-helper.t
+t/irc-main-cli.t
 t/irc-proxy-cli.t
 t/irc-proxy-runner.t
 t/irc-proxy-smoke.t

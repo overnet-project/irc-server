@@ -4,16 +4,16 @@ use File::Spec;
 use FindBin;
 use Test2::V0;
 
-my $script = File::Spec->catfile($FindBin::Bin, '..', 'bin', 'overnet-irc-proxy.pl');
+my $script = File::Spec->catfile($FindBin::Bin, '..', 'bin', 'overnet-irc-server');
 
-ok -f $script, 'proxy script exists'
-  or bail_out('overnet-irc-proxy.pl is required');
+ok -f $script, 'IRC command exists'
+  or bail_out('overnet-irc-server is required');
 
-my $output = qx{$^X "$script" --help 2>&1};
+my $output = qx{$^X "$script" proxy --help 2>&1};
 my $exit   = $? >> 8;
 
 is $exit, 0, '--help exits successfully';
-like $output, qr/overnet-irc-proxy\.pl\ \[options\]/mx, 'usage names the proxy script';
+like $output, qr/overnet-irc-server\ proxy\ \[options\]/mx, 'usage names the proxy command';
 like $output, qr/--listen-port\ PORT/mx,                  'usage documents the local listen port';
 like $output, qr/--server-host\ HOST/mx,                  'usage documents the upstream server host';
 like $output, qr/--server-tls/mx,                         'usage documents upstream TLS';

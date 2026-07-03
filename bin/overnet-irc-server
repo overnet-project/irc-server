@@ -3,8 +3,8 @@ use strictures 2;
 use FindBin;
 use lib grep {-d} ("$FindBin::Bin/../lib", "$FindBin::Bin/../../core-perl/lib",);
 
-use Overnet::Program::IRC::Script::Proxy;
+use Overnet::Program::IRC::Script::Main;
 
 our $VERSION = '0.001';
 
-exit Overnet::Program::IRC::Script::Proxy->run(@ARGV);
+exit Overnet::Program::IRC::Script::Main->run(@ARGV);

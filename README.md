@@ -9,7 +9,7 @@ GitHub: <https://github.com/overnet-project/irc-server>
 Start the local demo server:
 
 ```bash
-perl bin/overnet-irc-local-server.pl
+perl bin/overnet-irc-server local-server
 ```
 
 That starts the real IRC server program under the Overnet runtime host and prints the port it bound to.
@@ -17,8 +17,8 @@ That starts the real IRC server program under the Overnet runtime host and print
 Then open two more terminals and connect two local accounts:
 
 ```bash
-perl bin/overnet-irc-chat-client.pl --nick alice
-perl bin/overnet-irc-chat-client.pl --nick bob
+perl bin/overnet-irc-server chat-client --nick alice
+perl bin/overnet-irc-server chat-client --nick bob
 ```
 
 By default the client auto-joins `#overnet`. Plain text sends to the current target.
@@ -40,39 +40,39 @@ export OVERNET_AUTH_SOCK=/tmp/overnet-auth.sock
 or explicitly with `--auth-sock`:
 
 ```bash
-overnet-irc-auth.pl auth --auth-sock /tmp/overnet-auth.sock --scope irc://irc.example.test/overnet --challenge <challenge>
+overnet-irc-server auth auth --auth-sock /tmp/overnet-auth.sock --scope irc://irc.example.test/overnet --challenge <challenge>
 ```
 
 The normal manual flow is:
 
 ```bash
-overnet-irc-auth.pl auth --scope irc://irc.example.test/overnet --challenge <challenge>
-overnet-irc-auth.pl delegate --scope irc://irc.example.test/overnet --relay-url ws://127.0.0.1:7448 --delegate-pubkey <delegate_pubkey> --session-id <session_id> --expires-at <expires_at>
+overnet-irc-server auth auth --scope irc://irc.example.test/overnet --challenge <challenge>
+overnet-irc-server auth delegate --scope irc://irc.example.test/overnet --relay-url ws://127.0.0.1:7448 --delegate-pubkey <delegate_pubkey> --session-id <session_id> --expires-at <expires_at>
 ```
 
 If you already have the full IRC notice line, bridge mode can translate it directly:
 
 ```bash
-overnet-irc-auth.pl bridge --scope irc://irc.example.test/overnet --line '-server- OVERNETAUTH CHALLENGE <challenge>'
+overnet-irc-server auth bridge --scope irc://irc.example.test/overnet --line '-server- OVERNETAUTH CHALLENGE <challenge>'
 ```
 
 For client or ZNC scripting, bridge mode also works as a continuous stdin/stdout filter. It reads IRC lines from stdin, ignores unrelated lines, and emits auth commands on stdout for each matching `OVERNETAUTH` or SASL `NOSTR` challenge:
 
 ```bash
-some-irc-line-source | overnet-irc-auth.pl bridge --scope irc://irc.example.test/overnet
+some-irc-line-source | overnet-irc-server auth bridge --scope irc://irc.example.test/overnet
 ```
 
 The same continuous bridge mode also handles SASL `NOSTR` server challenges. Feed it IRC `AUTHENTICATE <chunk>` lines and it emits the matching client `AUTHENTICATE <chunk>` response lines:
 
 ```bash
-some-irc-line-source | overnet-irc-auth.pl bridge
+some-irc-line-source | overnet-irc-server auth bridge
 ```
 
 For normal IRC clients, run the local proxy instead of doing the auth commands
 manually:
 
 ```bash
-overnet-irc-proxy.pl --listen-port 16668 --server-host irc.example.test --server-port 6697 --server-tls
+overnet-irc-server proxy --listen-port 16668 --server-host irc.example.test --server-port 6697 --server-tls
 ```
 
 Then connect the IRC client to `127.0.0.1:16668`. The proxy handles upstream
@@ -102,7 +102,7 @@ that behavior explicit.
 - The demo server defaults to `127.0.0.1:16667`.
 - It auto-creates a Nostr signing key under the local state directory unless you pass `--signing-key-file`.
 - The local demo client is intentionally small. It is a convenience terminal client for exercising the Overnet IRC server, not a full IRC client.
-- `overnet-irc-auth.pl` uses the local auth agent. It does not read raw private keys directly.
+- `overnet-irc-server auth` uses the local auth agent. It does not read raw private keys directly.
 
 ## Related Repositories
 
