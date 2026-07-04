@@ -110,3 +110,7 @@ that behavior explicit.
 - [core-perl](https://github.com/overnet-project/core-perl)
 - [relay-perl](https://github.com/overnet-project/relay-perl)
 - [adapter-irc-perl](https://github.com/overnet-project/adapter-irc-perl)
+
+## AI Usage
+
+This code was developed in part with AI tooling such as Claude Code and Codex. We want to be upfront about that.
