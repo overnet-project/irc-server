@@ -3,7 +3,7 @@ package Overnet::Program::IRC::Server;
 use strictures 2;
 use Moo;
 use Carp        qw(croak);
-use Digest::SHA qw(sha256_hex);
+use Digest::SHA qw(sha256_hex hmac_sha256_hex);
 use Encode      qw(encode);
 use English     qw(-no_match_vars);
 use IO::Handle;
@@ -472,6 +472,7 @@ sub _normalized_runtime_config {
     listen_backlog   => _config_value($raw_config, 'listen_backlog', 10),
     server_name      => _config_value($raw_config, 'server_name',    'overnet.irc.local'),
     signing_key_file => $raw_config->{signing_key_file},
+    cloak_secret     => $raw_config->{cloak_secret},
     adapter_config   => _normalized_runtime_adapter_config($raw_config),
   };
   _validate_normalized_runtime_config($config);
@@ -2016,11 +2017,46 @@ sub _presentational_host_for_client {
     return $self->_default_presentational_host;
   }
 
-  return $client->{peerhost}
-    if defined $client->{peerhost}
-    && !ref($client->{peerhost})
-    && length($client->{peerhost});
+  my $peerhost = $client->{peerhost};
+  if (defined $peerhost && !ref($peerhost) && length($peerhost)) {
+    return $self->_cloak_host_for_address($peerhost);
+  }
   return $self->_default_presentational_host;
+}
+
+sub _cloak_domain {
+  my ($self) = @_;
+  return 'users.overnet';
+}
+
+# Present a stable per-connection cloak of the client's transport address rather
+# than the raw IP, so a user's network address is never exposed through WHO,
+# WHOIS, USERHOST, or authoritative masks. The cloak is a keyed hash of the
+# address, so it is stable for a given address but not reversible or enumerable
+# without the server cloak secret.
+sub _cloak_host_for_address {
+  my ($self, $address) = @_;
+  my $token = substr hmac_sha256_hex($address, $self->_cloak_secret), 0, 16;
+  return $token . q{.} . $self->_cloak_domain;
+}
+
+sub _cloak_secret {
+  my ($self) = @_;
+  if (defined $self->{_cloak_secret}) {
+    return $self->{_cloak_secret};
+  }
+
+  my $configured = ref($self->{config}) eq 'HASH' ? $self->{config}{cloak_secret} : undef;
+  if (defined $configured && !ref($configured) && length($configured)) {
+    $self->{_cloak_secret} = $configured;
+  } else {
+
+    # No stable secret was configured, so derive a per-process secret. Cloaks
+    # stay stable for this process but differ across restarts; configure
+    # cloak_secret for cloaks that are stable across restarts.
+    $self->{_cloak_secret} = sha256_hex(join q{:}, 'overnet-irc-cloak', $PROCESS_ID, time(), rand());
+  }
+  return $self->{_cloak_secret};
 }
 
 sub _canonical_current_nick {
