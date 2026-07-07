@@ -2017,6 +2017,14 @@ sub _presentational_host_for_client {
     return $self->_default_presentational_host;
   }
 
+  # An already-resolved presentational host (for example an operator-assigned
+  # vhost) is presented verbatim. A raw transport address is never presented as
+  # is; it is always replaced by a cloak.
+  my $vhost = $client->{presentational_host};
+  if (defined $vhost && !ref($vhost) && length($vhost)) {
+    return $vhost;
+  }
+
   my $peerhost = $client->{peerhost};
   if (defined $peerhost && !ref($peerhost) && length($peerhost)) {
     return $self->_cloak_host_for_address($peerhost);
