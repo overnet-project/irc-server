@@ -27,9 +27,10 @@ sub run {
   my ($class, @argv) = @_;
 
   my %options = (
-    host       => '127.0.0.1',
-    port       => 7_448,
-    grant_kind => 14_142,
+    host             => '127.0.0.1',
+    port             => 7_448,
+    grant_kind       => 14_142,
+    snapshot_pubkeys => [],
   );
   my $health_file;
   my $log_file;
@@ -37,14 +38,15 @@ sub run {
 
   my $parsed = GetOptionsFromArray(
     \@argv,
-    'host=s'        => \$options{host},
-    'port=i'        => \$options{port},
-    'relay-url=s'   => \$options{relay_url},
-    'grant-kind=i'  => \$options{grant_kind},
-    'store-file=s'  => \$options{store_file},
-    'health-file=s' => \$health_file,
-    'log-file=s'    => \$log_file,
-    'help'          => \$help,
+    'host=s'            => \$options{host},
+    'port=i'            => \$options{port},
+    'relay-url=s'       => \$options{relay_url},
+    'grant-kind=i'      => \$options{grant_kind},
+    'store-file=s'      => \$options{store_file},
+    'snapshot-pubkey=s' => $options{snapshot_pubkeys},
+    'health-file=s'     => \$health_file,
+    'log-file=s'        => \$log_file,
+    'help'              => \$help,
   );
   if (!$parsed) {
     checked_print_stderr(_usage());
@@ -98,6 +100,12 @@ sub _validate_options {
     croak "--store-file must be a non-empty string\n";
   }
 
+  for my $pubkey (@{$options->{snapshot_pubkeys} || []}) {
+    if (!(defined $pubkey && !ref($pubkey) && $pubkey =~ /\A[0-9a-f]{64}\z/mxs)) {
+      croak "--snapshot-pubkey must be a 64-char lowercase hex pubkey\n";
+    }
+  }
+
   return 1;
 }
 
@@ -120,10 +128,13 @@ sub _spawn_relay_child {
 
   my $program_path = File::Spec->catfile($FindBin::Bin, 'overnet-irc-server');
   return _spawn_child(
-    executable_name(),     $program_path,  'authority-relay',      '--host',
-    $options->{host},      '--port',       $options->{port},       '--relay-url',
-    $options->{relay_url}, '--grant-kind', $options->{grant_kind}, '--store-file',
-    $options->{store_file},
+    executable_name(),      $program_path,
+    'authority-relay',      '--host',
+    $options->{host},       '--port',
+    $options->{port},       '--relay-url',
+    $options->{relay_url},  '--grant-kind',
+    $options->{grant_kind}, '--store-file',
+    $options->{store_file}, (map { ('--snapshot-pubkey', $_) } @{$options->{snapshot_pubkeys} || []}),
   );
 }
 
@@ -298,6 +309,7 @@ Usage: overnet-irc-server authority-relay-service [options]
   --relay-url URL
   --grant-kind KIND
   --store-file PATH
+  --snapshot-pubkey PUBKEY   (repeatable; without it all 39xxx snapshots are rejected)
   --health-file PATH
   --log-file PATH
   --help

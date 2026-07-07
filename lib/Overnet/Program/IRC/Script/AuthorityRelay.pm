@@ -12,20 +12,22 @@ sub run {
   my ($class, @argv) = @_;
 
   my %options = (
-    host       => '127.0.0.1',
-    port       => 7_448,
-    grant_kind => 14_142,
+    host             => '127.0.0.1',
+    port             => 7_448,
+    grant_kind       => 14_142,
+    snapshot_pubkeys => [],
   );
   my $help = 0;
 
   my $parsed = GetOptionsFromArray(
     \@argv,
-    'host=s'       => \$options{host},
-    'port=i'       => \$options{port},
-    'relay-url=s'  => \$options{relay_url},
-    'grant-kind=i' => \$options{grant_kind},
-    'store-file=s' => \$options{store_file},
-    'help'         => \$help,
+    'host=s'            => \$options{host},
+    'port=i'            => \$options{port},
+    'relay-url=s'       => \$options{relay_url},
+    'grant-kind=i'      => \$options{grant_kind},
+    'store-file=s'      => \$options{store_file},
+    'snapshot-pubkey=s' => $options{snapshot_pubkeys},
+    'help'              => \$help,
   );
   if (!$parsed) {
     checked_print_stderr(_usage());
@@ -43,8 +45,9 @@ sub run {
   }
 
   my $relay = build_authoritative_relay(
-    relay_url  => $options{relay_url},
-    grant_kind => $options{grant_kind},
+    relay_url        => $options{relay_url},
+    grant_kind       => $options{grant_kind},
+    snapshot_pubkeys => $options{snapshot_pubkeys},
     (defined $options{store_file} ? (store_file => $options{store_file}) : ()),
   );
 
@@ -75,6 +78,12 @@ sub _validate_options {
     croak "--store-file must be a non-empty string\n";
   }
 
+  for my $pubkey (@{$options->{snapshot_pubkeys} || []}) {
+    if (!(defined $pubkey && !ref($pubkey) && $pubkey =~ /\A[0-9a-f]{64}\z/mxs)) {
+      croak "--snapshot-pubkey must be a 64-char lowercase hex pubkey\n";
+    }
+  }
+
   return 1;
 }
 
@@ -87,6 +96,7 @@ Usage: overnet-irc-server authority-relay [options]
   --relay-url URL
   --grant-kind KIND
   --store-file PATH
+  --snapshot-pubkey PUBKEY   (repeatable; without it all 39xxx snapshots are rejected)
   --help
 USAGE
 }
