@@ -254,8 +254,10 @@ subtest 'run handles adapter session failures and shutdown' => sub {
     _init_request(),
     {type => 'response', id => 'program-1', ok => JSON::true, result => {adapter_session_id => 'sess-1',},},
     {type => 'request', id => 's-4', method => 'runtime.shutdown', params => {},},
+    (map { +{type => 'notification', method => 'runtime.subscription_event', params => {item_type => 'mystery',},} }
+      1 .. 10),
   );
-  is $result, 1, 'a shutdown in the server loop returns cleanly';
+  is $result, 1, 'a shutdown followed by a burst drains in bounded batches and exits';
   like $output, qr/"status":"ready"/mxs, 'the server reported itself ready first';
 
   ($result, $error, $output) = _run_with_input(

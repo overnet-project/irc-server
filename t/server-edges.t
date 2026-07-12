@@ -13,6 +13,7 @@ use lib grep { -d $_ } (
 
 use Overnet::Authority::HostedChannel;
 use Overnet::Core::Nostr;
+use Socket ();
 use TestIRCServer;
 
 my $channel  = '#overnet';
@@ -1055,6 +1056,30 @@ subtest 'opaque transport and e2ee body guards reject bad shapes' => sub {
   ), 0, 'a mismatched recipient is refused';
   like _lines($server, 1), qr/does\ not\ match\ the\ target\ nick/mxs, 'the recipient mismatch is reported';
 
+  my $untargeted = $sender_key->create_event_hash(
+    kind       => 1059,
+    created_at => 1,
+    content    => 'x',
+    tags       => [],
+  );
+  $server->clear_sent_lines;
+  is $server->_emit_opaque_private_message_transport(
+    client => $alice, command => 'PRIVMSG', target_nick => 'bob', body_text => 'x', transport => $untargeted,
+  ), 0, 'a transport without a recipient tag is refused';
+
+  my $valid_wrap = $sender_key->create_event_hash(
+    kind       => 1059,
+    created_at => 1,
+    content    => 'x',
+    tags       => [['p', 'd' x 64],],
+  );
+  ok $server->_emit_opaque_private_message_transport(
+    client => $alice, command => 'NOTICE', target_nick => 'bob', body_text => 'x', transport => $valid_wrap,
+  ), 'a valid opaque NOTICE transport emits';
+  my ($opaque_notice) = grep { $_->{method} eq 'overnet.emit_private_message' } @{$server->requests};
+  is $opaque_notice->{params}{message}{private_type}, 'chat.dm_notice',
+    'the opaque NOTICE is typed as a DM notice';
+
   my ($undef_transport, $error, $flag) = $server->_decode_e2ee_dm_body(undef);
   is $flag, 0, 'an undefined body is not e2ee';
   ($undef_transport, $error, $flag) = $server->_decode_e2ee_dm_body('plain text');
@@ -1135,6 +1160,448 @@ subtest 'outbound decoration and tag parsing cover their corners' => sub {
   ok !scalar(grep { $_ eq 'sasl' } $server->_supported_capabilities),
     'plain profiles do not advertise sasl';
   like $server->_isupport_tokens, qr/NETWORK=overnet/mxs, 'isupport tokens name the network';
+};
+
+subtest 'more registration and reply corners' => sub {
+  my $server = _plain_server();
+  my $alice  = _client($server, 1, 'alice');
+  my $bob    = _client($server, 2, 'bob');
+  $server->_add_client_to_channel($_, $channel) for 1, 2;
+
+  is $server->_register_client_if_ready($alice), 0, 'a registered client does not re-register';
+  my $negotiating = $server->add_client(3, nick => 'nia', username => 'nia', cap_negotiation_active => 1,);
+  is $server->_register_client_if_ready($negotiating), 0, 'CAP negotiation defers registration';
+  my $authenticating = $server->add_client(4, nick => 'sam', username => 'sam', sasl_mechanism => 'NOSTR',);
+  is $server->_register_client_if_ready($authenticating), 0, 'an open SASL exchange defers registration';
+
+  ok $server->_nick_matches_current_client_nick({nick => 'alice',}, 'ALICE'),
+    'case-variant nicks match the current nick';
+  ok !$server->_nick_matches_current_client_nick({nick => 'alice',}, 'bob'), 'other nicks do not match';
+  ok !$server->_nick_matches_current_client_nick({nick => q{},}, 'bob'),
+    'an empty current nick matches nothing';
+  ok !$server->_nick_matches_current_client_nick({nick => 'alice',}, q{}),
+    'an empty requested nick matches nothing';
+
+  is $server->_handle_client_line(1, 'QUIT'), 1, 'a bare QUIT is handled';
+  like _lines($server, 2), qr/:alice\ QUIT\z/mxs, 'a bare QUIT broadcasts without a reason';
+
+  $bob->{capabilities}{'overnet-e2ee'} = 1;
+  is $server->_handle_client_line(2, 'OVERNETKEY SET :'), 1,
+    'OVERNETKEY with an empty argument is handled';
+  like _lines($server, 2), qr/461/mxs, 'the empty argument asks for more parameters';
+
+  is $server->_handle_userhost_command(2, [undef, 'bob']), 1, 'USERHOST tolerates undefined entries';
+
+  my $anonymous = _plain_server();
+  my $terse = $anonymous->add_client(1, nick => 'terse', registered => 1,);
+  $anonymous->{nick_to_client_id}{$anonymous->_nick_key('terse')} = 1;
+  $anonymous->_add_client_to_channel(1, $channel);
+  like $anonymous->_userhost_entry_for_nick('terse'), qr/terse=\+terse@/mxs,
+    'a userless client falls back to its nick in USERHOST';
+  is $anonymous->_whois_entry_for_nick('terse')->{username}, 'terse',
+    'a userless client falls back to its nick in WHOIS';
+  my ($who) = $anonymous->_who_entries_for_channel($channel);
+  is $who->{username}, 'terse', 'a userless client falls back to its nick in WHO';
+
+  $anonymous->{nick_to_client_id}{$anonymous->_nick_key('stale')} = 99;
+  $anonymous->_add_visible_nick($channel, 'stale');
+  my ($stale) = grep { $_->{nick} eq 'stale' } $anonymous->_who_entries_for_channel($channel);
+  is $stale->{username}, 'overnet', 'a stale nick mapping falls back to the placeholder';
+
+  $server->clear_sent_lines;
+  $server->_send_authoritative_invite_list_reply(2, $channel,
+    [{code => 'f' x 64,}, 'not-a-hash', {code => 'f' x 64, target_pubkey => 'd' x 64,},],
+  );
+  my @invite_lines = grep { /336/mxs } @{$server->lines_for(2)};
+  is scalar(@invite_lines), 1, 'malformed invite entries are skipped';
+  $server->_send_authoritative_join_request_list_reply(2, $channel, undef);
+  like _lines($server, 2), qr/339/mxs, 'an undefined request list still terminates';
+
+  is {$server->_first_tag_values(undef)}, {}, 'undefined tags yield no values';
+  my $nickonly = $server->_parse_irc_message(':upstream.server 001 alice :hi');
+  is $nickonly->{prefix_nick}, 'upstream.server', 'a bare prefix is the prefix nick';
+  is $server->_parse_irc_tags('=v;;a=b'), {a => 'b',}, 'nameless tag entries are skipped';
+  is $server->_nick_key([]), undef, 'a reference nick has no key';
+};
+
+subtest 'derive and cache corners' => sub {
+  my $server = _server();
+  my $tied = $server->_sort_authoritative_events([
+    {id => 'b', created_at => 5,},
+    {id => 'a', created_at => 5,},
+  ]);
+  is [map { $_->{id} } @{$tied}], ['b', 'a'], 'equal timestamps keep their input order';
+
+  $server->{authoritative_channel_cache}{$channel} = {events => 'nope',};
+  ok !$server->_authoritative_channel_is_known($channel), 'a malformed cache is not known';
+  $server->{authoritative_channel_cache}{$channel} = {events => [],};
+  ok !$server->_authoritative_channel_is_known($channel), 'an empty cache is not known';
+
+  my $emptyhost = _server(
+    adapter_config => {authority_profile => 'nip29', group_host => q{}, network => 'overnet',},
+  );
+  ok !$emptyhost->_is_authoritative_channel($channel), 'an empty group host is not authoritative';
+
+  is $server->_authority_relay_query_timeout_ms, 1_000, 'the configured query timeout is returned';
+  my $plain = _plain_server();
+  is $plain->_authority_relay_query_timeout_ms, 1_000, 'a relayless server defaults the query timeout';
+  my $badtimeout = _server(authority_relay => {url => 'ws://relay', query_timeout_ms => 'soon',},);
+  is $badtimeout->_authority_relay_query_timeout_ms, 1_000, 'a malformed query timeout defaults';
+
+  like $server->_generate_authoritative_auth_challenge({}), qr/\A[0-9a-f]{64}\z/mxs,
+    'a bare client hash still yields a challenge';
+
+  my $unbound = _server(
+    adapter_config => {
+      authority_profile => 'nip29',
+      group_host        => 'groups.example.test',
+      network           => 'overnet',
+      channel_groups    => {$channel => [],},
+    },
+  );
+  ok !$unbound->_is_authoritative_nip29_event(
+    channel => $channel,
+    event   => {kind => 9021, tags => [['h', 'x'],],},
+  ), 'an unresolvable binding matches no events';
+  for my $kind (9000, 9001, 9_002, 9009, 9021, 9022, 39_000, 39_001, 39_002, 39_003) {
+    ok $server->_is_authoritative_nip29_event(
+      channel => $channel,
+      event   => {kind => $kind, tags => [['h', $group_id],],},
+    ), "kind $kind is an authoritative NIP-29 event";
+  }
+  ok !$server->_is_authoritative_nip29_event(
+    channel => $channel,
+    event   => {kind => [], tags => [],},
+  ), 'a reference kind matches no events';
+
+  is $server->_update_authoritative_channel_cache_with_event(channel => $channel, event => 'nope',), 0,
+    'a malformed event updates no cache';
+  $server->request_handler(
+    sub {
+      my (%args) = @_;
+      if ($args{method} eq 'adapters.derive'
+        && ($args{params}{operation} || q{}) eq 'authoritative_channel_view') {
+        return {view => [{members => [],},],};
+      }
+      return;
+    }
+  );
+  $server->{authoritative_channel_cache}{$channel} = {
+    events => [{id => '5' x 64, kind => 9021, created_at => 1,},],
+    view   => {members => [],},
+  };
+  my $unidentified = {kind => 9021, created_at => 2, tags => [],};
+  is $server->_update_authoritative_channel_cache_with_event(channel => $channel, event => $unidentified,), 1,
+    'an event without an id still updates the cache';
+  is $server->_update_authoritative_channel_cache_with_event(
+    channel => $channel,
+    event   => {id => '5' x 64, kind => 9021, created_at => 1,},
+  ), 1, 'an already-cached event id returns early';
+
+  my $stateless = _server();
+  $stateless->request_handler(sub { return {} });
+  is $stateless->_apply_authoritative_channel_cache_update(
+    channel  => $channel,
+    event    => {kind => 9021, tags => [],},
+    old_view => {members => [],},
+    new_view => {members => [],},
+  ), 1, 'an update for a channel without local state applies quietly';
+
+  my $joined = _server();
+  _client($joined, 1, 'alice', authority_pubkey => 'a' x 64,);
+  $joined->_add_client_to_channel(1, $channel);
+  $joined->clear_sent_lines;
+  is $joined->_apply_authoritative_channel_cache_update(
+    channel   => $channel,
+    event     => {kind => 9_002, tags => [['h', $group_id],],},
+    old_view  => {members => [], channel_modes => 'imt', ban_masks => ['x!*@*'],},
+    new_view  => {members => [], channel_modes => 'imt', ban_masks => ['x!*@*'],},
+    old_state => {channel_modes => 'imt', ban_masks => ['x!*@*'],},
+    new_state => {channel_modes => 'imt', ban_masks => ['x!*@*'],},
+  ), 1, 'an unchanged mode event applies';
+  is _lines($joined, 1), q{}, 'unchanged modes broadcast nothing';
+
+  is $joined->_apply_authoritative_channel_cache_update(
+    channel  => $channel,
+    event    => {kind => 9009, tags => [['h', $group_id], ['code', 'f' x 64], ['p', 'a' x 64],],},
+    old_view => {members => [],},
+    new_view => {members => [],},
+  ), 1, 'an invite event missing from the new view applies';
+  is _lines($joined, 1), q{}, 'an unlisted invite code sends nothing';
+
+  my $unregistered = $joined->add_client(4);
+  my $nickless     = $joined->add_client(5, registered => 1,);
+  my $keyless      = _client($joined, 6, 'kay',);
+  is $joined->_apply_authoritative_channel_cache_update(
+    channel  => $channel,
+    event    => {kind => 9009, tags => [['h', $group_id], ['code', 'e' x 64], ['p', 'z' x 64],],},
+    old_view => {members => [],},
+    new_view => {members => [], pending_invites => [{code => 'e' x 64,},],},
+  ), 1, 'an invite for an unmatched pubkey applies';
+  is _lines($joined, 6), q{}, 'clients without the target pubkey hear nothing';
+
+  is $joined->_apply_authoritative_channel_cache_update(
+    channel  => $channel,
+    event    => {kind => 9021, pubkey => 'a' x 64, tags => [['h', $group_id],],},
+    old_view => {members => [], present_members => [],},
+    new_view => {members => [], present_members => [{pubkey => 'z' x 64,},],},
+  ), 1, 'a join event whose actor is not the added member applies';
+
+  $joined->clear_sent_lines;
+  is $joined->_apply_authoritative_channel_cache_update(
+    channel  => $channel,
+    event    => {kind => 9001, pubkey => 'a' x 64, content => q{}, tags => [['h', $group_id], ['p', 'other'],],},
+    old_view => {members => [], present_members => [{pubkey => 'z' x 64,},],},
+    new_view => {members => [], present_members => [],},
+  ), 1, 'a kick event with a mismatched target tag applies';
+  is _lines($joined, 1), q{}, 'the mismatched kick broadcasts nothing';
+
+  is $joined->_apply_authoritative_channel_cache_update(
+    channel  => $channel,
+    event    => {kind => 9001, pubkey => 'a' x 64, content => q{}, tags => [['h', $group_id], ['p', 'z' x 64],],},
+    old_view => {members => [], present_members => [{pubkey => 'z' x 64,},],},
+    new_view => {members => [], present_members => [],},
+  ), 1, 'a kick event for an unknown remote member applies';
+  is _lines($joined, 1), q{}, 'a kick without a resolvable nick broadcasts nothing';
+
+  is $joined->_apply_authoritative_channel_cache_update(
+    channel  => $channel,
+    event    => {kind => 9022, pubkey => 'a' x 64, content => q{}, tags => [['h', $group_id],],},
+    old_view => {members => [], present_members => [{pubkey => 'z' x 64,},],},
+    new_view => {members => [], present_members => [],},
+  ), 1, 'a part event whose actor is not the removed member applies';
+  is _lines($joined, 1), q{}, 'the mismatched part broadcasts nothing';
+};
+
+subtest 'permission fallbacks retry and downgrade' => sub {
+  my $moderated_view = {members => [], channel_modes => 'mt',};
+  my $server = _local_authority_server();
+  my $keyless = _client($server, 1, 'kay',);
+  _local_authority_handler($server, view => $moderated_view,);
+  my $speak = $server->_authoritative_speak_permission_for_client($channel, $keyless);
+  is $speak->{allowed}, 0,    'a keyless client is muted under +m';
+  is $speak->{reason},  '+m', 'the moderation reason is reported';
+  my $topic = $server->_authoritative_topic_permission_for_client($channel, $keyless);
+  is $topic->{allowed}, 0,    'a keyless client is topic restricted under +t';
+  is $topic->{reason},  '+t', 'the restriction reason is reported';
+  my $mode_permission = $server->_authoritative_mode_write_permission_for_client($channel, $keyless, mode => '+m',);
+  is $mode_permission->{reason}, 'not_operator', 'a keyless client cannot write modes';
+  my $action_permission =
+    $server->_authoritative_channel_action_permission_for_client($channel, $keyless, action => 'kick',);
+  is $action_permission->{reason}, 'not_operator', 'a keyless client cannot act on the channel';
+
+  my $keyed = _local_authority_server();
+  my $pubkeyed = _client($keyed, 1, 'kay', authority_pubkey => 'a' x 64,);
+  _local_authority_handler(
+    $keyed,
+    view                           => $moderated_view,
+    authoritative_speak_permission => {permission => [{reason => 'authoritative state unavailable',},],},
+    authoritative_topic_permission => {permission => [{reason => 'authoritative state unavailable',},],},
+  );
+  is $keyed->_authoritative_speak_permission_for_client($channel, $pubkeyed)->{reason}, '+m',
+    'an unavailable speak permission falls back to moderation';
+  is $keyed->_authoritative_topic_permission_for_client($channel, $pubkeyed)->{reason}, '+t',
+    'an unavailable topic permission falls back to restriction';
+
+  my $unpopulated = _local_authority_server();
+  my $client = _client($unpopulated, 1, 'kay', authority_pubkey => 'a' x 64,);
+  _local_authority_handler($unpopulated, view => {members => [],},);
+  is $unpopulated->_authoritative_speak_permission_for_client($channel, $client)->{allowed}, 1,
+    'an unpopulated speak permission falls back to the open channel';
+  is $unpopulated->_authoritative_topic_permission_for_client($channel, $client)->{allowed}, 1,
+    'an unpopulated topic permission falls back to the open channel';
+
+  my $permission = {allowed => 1,};
+  is Overnet::Program::IRC::Server::_add_authoritative_mode_permission_details(
+    $unpopulated, $permission, {members => [],}, '-b', [],
+  ), 1, 'a mask mode without an argument attaches nothing';
+  ok !exists $permission->{normalized_ban_mask}, 'no mask is attached without an argument';
+
+  my $fresh     = _server();
+  my $admission = $fresh->_empty_authoritative_join_admission($channel, undef, []);
+  is $admission->{auth_required}, 1, 'an anonymous empty admission requires auth';
+
+  my $cached = _server();
+  $cached->{authoritative_channel_cache}{$channel} = {events => [],};
+  $cached->request_handler(sub { return {events => [],} });
+  is $cached->_read_authoritative_join_events($channel), [],
+    'an empty relay cache forces a reread of join events';
+};
+
+subtest 'send failures tear down or croak' => sub {
+  local $SIG{PIPE} = 'IGNORE';
+  my $server = _plain_server();
+  socketpair my $near, my $far, Socket::AF_UNIX(), Socket::SOCK_STREAM(), 0
+    or die "socketpair: $!";
+  my $alice = _client($server, 1, 'alice');
+  $alice->{socket} = $near;
+  close $far;
+  my $sent = Overnet::Program::IRC::Server::_send_client_line($server, 1, 'PING :one');
+  $sent = Overnet::Program::IRC::Server::_send_client_line($server, 1, 'PING :two') if $sent;
+  is $sent, 0, 'a peer-closed socket disconnects the client';
+  ok !exists $server->{clients}{1}, 'the client is removed after the failed write';
+
+  my $croaking = _plain_server();
+  socketpair my $left, my $right, Socket::AF_UNIX(), Socket::SOCK_DGRAM(), 0
+    or die "socketpair: $!";
+  my $bob = _client($croaking, 2, 'bob');
+  $bob->{socket} = $left;
+  close $right;
+  like dies { Overnet::Program::IRC::Server::_send_client_line($croaking, 2, 'PING :x') },
+    qr/failed\ to\ write\ IRC\ line/mxs, 'an unwritable socket croaks';
+  close $left;
+};
+
+subtest 'outbound decoration merges and skips' => sub {
+  my $server = _plain_server();
+  my $alice  = _client(
+    $server, 1, 'alice',
+    capabilities => {'server-time' => 1, 'account-tag' => 1, 'message-tags' => 1,},
+  );
+  my $bob = _client($server, 2, 'bob', authority_pubkey => 'b' x 64,);
+
+  is $server->_decorate_outbound_line_for_client($alice, undef), undef, 'undefined lines pass through';
+  is $server->_decorate_outbound_line_for_client('nope', 'PING :x'), 'PING :x',
+    'malformed clients pass lines through';
+  is $server->_decorate_outbound_line_for_client($alice, ':srv CAP * LS :sasl'), ':srv CAP * LS :sasl',
+    'CAP traffic is never decorated';
+  is $server->_decorate_outbound_line_for_client($alice, 'AUTHENTICATE +'), 'AUTHENTICATE +',
+    'AUTHENTICATE traffic is never decorated';
+
+  my $merged = $server->_decorate_outbound_line_for_client($alice, '@time=then;custom=1 :bob PRIVMSG alice :x');
+  like $merged, qr/custom=1/mxs,   'existing tags are preserved';
+  like $merged, qr/time=then/mxs,  'existing tags win over generated tags';
+  like $merged, qr/account=b/mxs,  'generated tags join the merge';
+  unlike $merged, qr/time=\d{4}/mxs, 'the duplicate generated time tag is dropped';
+
+  is $server->_outbound_account_tag_for_line(undef), undef, 'undefined lines carry no account';
+  is $server->_outbound_account_tag_for_line('PING :x'), undef, 'prefixless lines carry no account';
+  is $server->_outbound_account_tag_for_line(':!user@host PRIVMSG x :y'), undef,
+    'a prefix without a nick carries no account';
+  is $server->_outbound_account_tag_for_line(':ghost PRIVMSG x :y'), undef,
+    'an unknown sender carries no account';
+  is $server->_outbound_account_tag_for_line(':alice PRIVMSG x :y'), undef,
+    'a sender without an account carries no account';
+};
+
+subtest 'names, bootstrap, and broadcast corners' => sub {
+  my $server = _local_authority_server();
+  my $alice  = _client($server, 1, 'alice');
+  $server->_add_client_to_channel(1, $channel);
+  $server->{channels}{$server->_channel_key($channel)}{visible_nicks} = {};
+  $server->request_handler(sub { return {} });
+
+  $server->clear_sent_lines;
+  ok $server->_send_names_list(1, $channel), 'a viewless names list renders';
+  like _lines($server, 1), qr/353 .* alice/mxs, 'the joined client names itself in the fallback';
+
+  ok $server->_send_join_bootstrap(1, $channel), 'a viewless join bootstrap renders';
+
+  my $plain = _plain_server();
+  my $bob   = _client($plain, 1, 'bob');
+  $plain->_add_client_to_channel(1, $channel);
+  $plain->_channel_state($channel)->{topic_line} = ":x TOPIC $channel :hello";
+  $plain->clear_sent_lines;
+  ok $plain->_send_join_bootstrap(1, $channel), 'a local bootstrap renders';
+  like _lines($plain, 1), qr/TOPIC\ \Q$channel\E\ :hello/mxs, 'the stored topic line is replayed';
+
+  $plain->{channels}{$plain->_channel_key($channel)}{members}{99} = 1;
+  is $plain->_broadcast_channel_line($channel, 'NOTE'), 1, 'stale members are skipped in broadcasts';
+
+  $plain->_add_visible_nick($channel, 'twice');
+  $plain->_add_visible_nick($channel, 'twice');
+  is $plain->_remove_visible_nick($channel, 'twice'), 1, 'a double-counted nick survives one removal';
+  ok $plain->{channels}{$plain->_channel_key($channel)}{visible_nicks}{$plain->_nick_key('twice')},
+    'the nick is still visible';
+
+  $plain->{channels}{$plain->_channel_key('#unnamed')} = {channel_name => q{}, members => {},};
+  is $plain->_canonical_channel_name('#unnamed'), '#unnamed',
+    'a stored empty channel name falls back to the input';
+
+  is [$plain->_shared_client_ids_for_nick(undef)], [], 'an undefined nick shares no clients';
+
+  my $relay = _server();
+  my $carol = _client($relay, 1, 'carol');
+  $relay->_add_client_to_channel(1, $channel);
+  $relay->request_handler(sub { return {} });
+  is $relay->_handle_client_line(1, "NAMES $channel"), 1, 'a relay NAMES forces a refresh';
+
+  my $unregistered_member = _plain_server();
+  my $dave = _client($unregistered_member, 1, 'dave');
+  $unregistered_member->_add_client_to_channel(1, $channel);
+  $unregistered_member->add_client(2);
+  $unregistered_member->{channels}{$unregistered_member->_channel_key($channel)}{members}{2} = 1;
+  is $unregistered_member->_visible_users_for_channel_state(
+    $channel,
+    $unregistered_member->{channels}{$unregistered_member->_channel_key($channel)},
+  ), 1, 'unregistered members are not counted as visible';
+
+  is $unregistered_member->_list_entry_for_channel($dave, ',bad'), undef,
+    'an invalid channel lists nothing';
+
+  my $listless = _server();
+  _client($listless, 1, 'eve');
+  $listless->request_handler(sub { return {} });
+  is $listless->_authoritative_list_entry_for_channel($listless->{clients}{1}, $channel, undef), undef,
+    'no view and no state list nothing';
+  my $tombstoned_list = _server();
+  _client($tombstoned_list, 1, 'eve');
+  $tombstoned_list->request_handler(
+    sub {
+      my (%args) = @_;
+      if ($args{method} eq 'adapters.derive'
+        && ($args{params}{operation} || q{}) eq 'authoritative_channel_view') {
+        return {view => [{members => [], tombstoned => 1,},],};
+      }
+      return;
+    }
+  );
+  $tombstoned_list->{authoritative_channel_cache}{$channel} = {
+    events => [_group_event()],
+    view   => {members => [], tombstoned => 1,},
+  };
+  is $tombstoned_list->_authoritative_list_entry_for_channel($tombstoned_list->{clients}{1}, $channel, undef),
+    undef, 'a tombstoned channel lists nothing';
+
+  my $entries = _plain_server();
+  my $frank   = _client($entries, 1, 'frank', authority_pubkey => 'a' x 64,);
+  $entries->_add_client_to_channel(1, $channel);
+  $entries->add_client(2);
+  my $channel_state = $entries->{channels}{$entries->_channel_key($channel)};
+  $channel_state->{members}{2}  = 1;
+  $channel_state->{members}{99} = 1;
+  my $nameless_member = $entries->add_client(3, registered => 1,);
+  $channel_state->{members}{3} = 1;
+  my (@collected, %seen);
+  $entries->_add_local_authoritative_name_entries(\@collected, \%seen, $channel_state, {members => [],});
+  is scalar(@collected), 1, 'stale, unregistered, and nickless members are skipped';
+  @collected = ();
+  %seen      = ();
+  $entries->_add_present_authoritative_name_entries(
+    \@collected, \%seen,
+    {members => ['nope', {roles => [],}, {pubkey => 'z' x 64,}, {pubkey => 'y' x 64,},],},
+    {('z' x 64) => {}, ('y' x 64) => {},},
+  );
+  is scalar(@collected), 0, 'present members without resolvable nicks are skipped';
+  @collected = ();
+  is $entries->_add_self_name_entry_if_empty(\@collected, $entries->add_client(4, nick => 'gil',), $channel), 1,
+    'an unjoined client adds no self entry';
+  is scalar(@collected), 0, 'the entry list stays empty';
+};
+
+subtest 'disconnects, drains, and request guards' => sub {
+  my $server = _plain_server();
+  my $alice  = _client($server, 1, 'alice');
+  my $bob    = _client($server, 2, 'bob');
+  $server->_add_client_to_channel($_, $channel) for 1, 2;
+  is $server->_disconnect_client(1, emit_quit => 0,), 1, 'a silent disconnect succeeds';
+  is _lines($server, 2), q{}, 'a silent disconnect broadcasts nothing';
+  ok !exists $server->{clients}{1}, 'the silently disconnected client is removed';
+
+  like dies { Overnet::Program::IRC::Server::_validate_runtime_request_args([], {}) },
+    qr/method\ is\ required/mxs, 'a reference method croaks';
+
+  is $server->_accept_client, 1, 'accepting without a listener is a no-op';
 };
 
 done_testing;

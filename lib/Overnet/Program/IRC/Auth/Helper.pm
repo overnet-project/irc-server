@@ -380,7 +380,7 @@ sub _flush_sasl_chunk_state {
 
   my $decoded = eval { decode_base64($buffer) };
   if (!(defined $decoded)) {    # uncoverable branch true reason: decode_base64 skips invalid bytes instead of failing
-    return ();                  # uncoverable statement reason: defensive guard for a decode_base64 failure that cannot happen
+    return ();    # uncoverable statement reason: defensive guard for a decode_base64 failure that cannot happen
   }
 
   my $challenge_payload = eval { JSON::decode_json($decoded) };

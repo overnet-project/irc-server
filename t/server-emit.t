@@ -364,6 +364,20 @@ subtest 'private subscription items render decrypted and opaque messages' => sub
     provenance => {external_identity => 'alice',},
     body       => {text => 'x',},
   ), undef, 'a DM to an unconnected nick renders nothing';
+  is $server->_render_private_message_item(
+    event_type => 'chat.dm_message',
+    object_id  => 'irc:overnet:dm:bob',
+    provenance => {external_identity => [],},
+    body       => {text => 'x',},
+  ), undef, 'a reference external identity renders nothing';
+
+  my $dm_notice = $server->_render_private_message_item(
+    event_type => 'chat.dm_notice',
+    object_id  => 'irc:overnet:dm:bob',
+    provenance => {external_identity => 'alice',},
+    body       => {text => 'heads up',},
+  );
+  like $dm_notice->{line}, qr/:alice\ NOTICE\ bob\ :heads\ up/mxs, 'a decrypted DM notice renders as NOTICE';
 };
 
 subtest 'network nick subscription items rename visible nicks' => sub {
@@ -433,6 +447,32 @@ subtest 'network nick subscription items rename visible nicks' => sub {
   );
   is $server->_handle_subscription_event({item_type => 'event', data => $unwatched,}), 0,
     'a nick rename with no shared watchers renders nothing';
+
+  my $wrong_event_type = $server->{signing_key}->create_event_hash(
+    kind       => 1,
+    created_at => 1_004,
+    content    => JSON::encode_json({body => {old_nick => 'a', new_nick => 'b',},}),
+    tags       => [
+      ['overnet_ot', 'irc.network'],
+      ['overnet_oid', 'irc:overnet'],
+      ['overnet_et', 'irc.frob'],
+    ],
+  );
+  is $server->_handle_subscription_event({item_type => 'event', data => $wrong_event_type,}), 0,
+    'a network event with another event type renders nothing';
+
+  my $mismatched_channel = $server->{signing_key}->create_event_hash(
+    kind       => 1,
+    created_at => 1_005,
+    content    => JSON::encode_json({provenance => {external_identity => 'x',}, body => {text => 'x',},}),
+    tags       => [
+      ['overnet_ot',  'chat.channel'],
+      ['overnet_oid', 'irc:overnet:notachannel'],
+      ['overnet_et',  'chat.message'],
+    ],
+  );
+  is $server->_handle_subscription_event({item_type => 'event', data => $mismatched_channel,}), 0,
+    'a channel event with a malformed object id renders nothing';
 };
 
 subtest 'topic and part subscription items update channel state' => sub {
@@ -496,6 +536,38 @@ subtest 'topic and part subscription items update channel state' => sub {
   );
   is $server->_handle_subscription_event({item_type => 'event', data => $quit,}), 1, 'a quit event fans out';
   like _lines($server, 1), qr/:ghost\ QUIT/mxs, 'the quit line is rendered';
+
+  my $notice = $server->{signing_key}->create_event_hash(
+    kind       => 1,
+    created_at => 1_010,
+    content    => JSON::encode_json(
+      {provenance => {external_identity => 'roamer',}, body => {text => 'psst',},}
+    ),
+    tags => [
+      ['overnet_ot',  'chat.channel'],
+      ['overnet_oid', 'irc:overnet:' . $channel],
+      ['overnet_et',  'chat.notice'],
+    ],
+  );
+  is $server->_handle_subscription_event({item_type => 'event', data => $notice,}), 1,
+    'a channel notice fans out';
+  like _lines($server, 1), qr/:roamer\ NOTICE\ \Q$channel\E\ :psst/mxs, 'the notice line is rendered';
+
+  my $join = $server->{signing_key}->create_event_hash(
+    kind       => 1,
+    created_at => 1_011,
+    content    => JSON::encode_json({provenance => {external_identity => 'newbie',}, body => {},}),
+    tags       => [
+      ['overnet_ot',  'chat.channel'],
+      ['overnet_oid', 'irc:overnet:' . $channel],
+      ['overnet_et',  'chat.join'],
+    ],
+  );
+  is $server->_handle_subscription_event({item_type => 'event', data => $join,}), 1,
+    'a channel join fans out';
+  like _lines($server, 1), qr/:newbie\ JOIN\ \Q$channel\E/mxs, 'the join line is rendered';
+  ok $server->{channels}{$server->_channel_key($channel)}{visible_nicks}{$server->_nick_key('newbie')},
+    'the joining nick becomes visible';
 
   my $unknown_type = $server->{signing_key}->create_event_hash(
     kind       => 1,
