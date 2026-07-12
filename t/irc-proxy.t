@@ -216,6 +216,117 @@ subtest 'proxy refuses relay-backed SASL challenges when auto-delegation is disa
   is scalar(@{$client->calls}), 1, 'the proxy does not request delegation when auto-delegation is disabled';
 };
 
+subtest 'proxy line handling edge cases stay on the right side' => sub {
+  my $client = t::irc_auth_helper::FakeClient->new(response => _artifact_response(_auth_event(seed => '9')));
+  my $proxy  = Overnet::Program::IRC::Proxy->new(client => $client,);
+
+  $proxy->start;
+  is $proxy->start,
+    {
+    to_server => [],
+    to_client => [],
+    },
+    'a second start does not renegotiate capabilities';
+
+  is $proxy->client_line(undef),
+    {
+    to_server => [],
+    to_client => [],
+    },
+    'an undef client line is ignored';
+
+  is $proxy->client_line("\r\n"),
+    {
+    to_server => [],
+    to_client => [],
+    },
+    'an empty client line is ignored';
+
+  is $proxy->client_line("CAP END\r\n"),
+    {
+    to_server => [],
+    to_client => [],
+    },
+    'client CAP END is swallowed while the proxy owns upstream CAP';
+
+  is $proxy->client_line("AUTHENTICATE +\r\n"),
+    {
+    to_server => [],
+    to_client => [],
+    },
+    'client AUTHENTICATE is swallowed while the proxy owns upstream SASL';
+
+  is $proxy->client_line("PASS sekrit\r\n"),
+    {
+    to_server => ["PASS sekrit\r\n"],
+    to_client => [],
+    },
+    'PASS is forwarded before authentication';
+
+  is $proxy->client_line("QUIT :bye\r\n"),
+    {
+    to_server => ["QUIT :bye\r\n"],
+    to_client => [],
+    },
+    'QUIT is forwarded before authentication';
+
+  is $proxy->client_line(":prefix-only\r\n"),
+    {
+    to_server => [],
+    to_client => [],
+    },
+    'a prefix-only client line is buffered, not forwarded';
+
+  is $proxy->server_line(undef),
+    {
+    to_server => [],
+    to_client => [],
+    },
+    'an undef server line is ignored';
+
+  is $proxy->server_line(":server CAP * NAK :sasl\r\n"),
+    {
+    to_server => [],
+    to_client => ["ERROR :Overnet IRC server does not accept SASL\r\n"],
+    },
+    'an upstream SASL NAK is surfaced to the client as an error';
+
+  is $proxy->server_line(":server 904 alice :SASL authentication failed\r\n"),
+    {
+    to_server => [],
+    to_client => [":server 904 alice :SASL authentication failed\r\n"],
+    },
+    'an upstream SASL failure numeric is forwarded to the client';
+
+  is $proxy->server_line(":server CAP * LS :sasl multi-prefix\r\n"),
+    {
+    to_server => [],
+    to_client => [],
+    },
+    'other upstream CAP traffic is hidden from the client';
+
+  is $proxy->server_line("PING :token-1\r\n"),
+    {
+    to_server => ["PONG :token-1\r\n"],
+    to_client => [],
+    },
+    'upstream PING during hidden auth is answered by the proxy';
+
+  is $proxy->server_line("PING\r\n"),
+    {
+    to_server => [],
+    to_client => ["PING\r\n"],
+    },
+    'a payload-less PING falls through to the client';
+
+  is $proxy->server_line(":server NOTICE * :maintenance\r\n"),
+    {
+    to_server => [],
+    to_client => [":server NOTICE * :maintenance\r\n"],
+    },
+    'other pre-auth server traffic is forwarded to the client';
+};
+
 sub _drive_server_lines {
   my ($proxy, $input) = @_;
   my @lines = grep {length} split /\r\n/mx, $input;

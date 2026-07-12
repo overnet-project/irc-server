@@ -753,6 +753,374 @@ subtest 'service identity flags require both scheme and value' => sub {
   is scalar @{$client->calls}, 0, 'the auth agent is not called on invalid service identity input';
 };
 
+subtest 'run rejects unsupported commands and missing arguments' => sub {
+  my $client = t::irc_auth_helper::FakeClient->new(response => _ok_response(),);
+
+  like dies { Overnet::Program::IRC::Auth::Helper->run(command => 'frobnicate') },
+    qr/unsupported\ command:\ frobnicate/mx, 'an unsupported command croaks';
+  like dies { Overnet::Program::IRC::Auth::Helper->run() },
+    qr/unsupported\ command:/mx, 'a missing command croaks';
+
+  like dies {
+    Overnet::Program::IRC::Auth::Helper->run(client => $client, command => 'auth', challenge => q{}, scope => 's',);
+  }, qr/--challenge\ is\ required/mx, 'auth without a challenge croaks';
+  like dies {
+    Overnet::Program::IRC::Auth::Helper->run(client => $client, command => 'auth', challenge => 'c', scope => q{},);
+  }, qr/--scope\ is\ required/mx, 'auth without a scope croaks';
+
+  my %delegate = (
+    client          => $client,
+    command         => 'delegate',
+    relay_url       => 'ws://relay.example.test:1',
+    scope           => 'irc://irc.example.test/overnet',
+    delegate_pubkey => ('f' x 64),
+    session_id      => 'session-1',
+    expires_at      => '1744304600',
+  );
+  for my $field (qw(relay_url scope delegate_pubkey session_id expires_at)) {
+    my %missing = (%delegate, $field => q{},);
+    (my $flag = $field) =~ tr/_/-/;
+    like dies { Overnet::Program::IRC::Auth::Helper->run(%missing) }, qr/--$flag\ is\ required/mx,
+      "delegate without $field croaks";
+  }
+
+  my $delegated = Overnet::Program::IRC::Auth::Helper->run(%delegate, nick => q{},);
+  like $delegated, qr/\S/mx, 'a delegate request with an unusable nick still succeeds without the nick tag';
+
+  like dies { Overnet::Program::IRC::Auth::Helper->_bridge_line(line => q{},) },
+    qr/--line\ is\ required/mx, 'a bridge line command without a line croaks';
+  like dies {
+    Overnet::Program::IRC::Auth::Helper->run(
+      client  => $client,
+      command => 'bridge',
+      line    => ':server NOTICE alice :nothing to see',
+    );
+  }, qr/unsupported\ OVERNETAUTH\ bridge\ line/mx, 'an unparseable bridge line croaks';
+
+  like dies { Overnet::Program::IRC::Auth::Helper->consume_sasl_challenge_line(client => $client, line => q{},) },
+    qr/line\ is\ required/mx, 'consume_sasl_challenge_line without a line croaks';
+
+  my $mechanism = Overnet::Program::IRC::Auth::Helper->consume_sasl_challenge_line(
+    client => $client,
+    state  => {},
+    line   => 'AUTHENTICATE NOSTR',
+  );
+  is $mechanism, {handled => 0, lines => [],}, 'the NOSTR mechanism announcement is not a challenge chunk';
+
+  my $empty_marker = Overnet::Program::IRC::Auth::Helper->consume_sasl_challenge_line(
+    client => $client,
+    state  => {},
+    line   => 'AUTHENTICATE +',
+  );
+  is $empty_marker, {handled => 1, lines => [],}, 'an empty-payload marker flushes an empty buffer quietly';
+};
+
+subtest 'auth agent failures are reported with usable messages' => sub {
+  my %auth = (
+    command   => 'auth',
+    challenge => '6cf8a952df516a8e691c6138496516abe84ccfefa9678f518bb52f70b1ca966f',
+    scope     => 'irc://irc.example.test/overnet',
+  );
+
+  like dies { Overnet::Program::IRC::Auth::Helper->run(%auth) }, qr/client\ is\ required/mx,
+    'a missing auth client croaks';
+
+  my $undef_response = t::irc_auth_helper::FakeClient->new();
+  like dies { Overnet::Program::IRC::Auth::Helper->run(%auth, client => $undef_response,) },
+    qr/auth\ agent\ request\ failed/mx, 'an undef response reports a generic failure';
+
+  my $no_error = t::irc_auth_helper::FakeClient->new(response => {type => 'response', ok => JSON::false,},);
+  like dies { Overnet::Program::IRC::Auth::Helper->run(%auth, client => $no_error,) },
+    qr/auth\ agent\ request\ failed/mx, 'a failure without an error object reports a generic failure';
+
+  my $bare_error =
+    t::irc_auth_helper::FakeClient->new(response => {type => 'response', ok => JSON::false, error => {},},);
+  like dies { Overnet::Program::IRC::Auth::Helper->run(%auth, client => $bare_error,) },
+    qr/unknown_error:\ unknown\ auth-agent\ failure/mx, 'an empty error object gets default code and message';
+
+  my $named_error = t::irc_auth_helper::FakeClient->new(
+    response => {
+      type  => 'response',
+      ok    => JSON::false,
+      error => {
+        code    => 'auth.denied',
+        message => 'the user said no',
+      },
+    },
+  );
+  like dies { Overnet::Program::IRC::Auth::Helper->run(%auth, client => $named_error,) },
+    qr/auth[.]denied:\ the\ user\ said\ no/mx, 'error code and message are surfaced';
+
+  my $no_artifacts = t::irc_auth_helper::FakeClient->new(
+    response => {
+      type   => 'response',
+      ok     => JSON::true,
+      result => {artifacts => [],},
+    },
+  );
+  like dies { Overnet::Program::IRC::Auth::Helper->run(%auth, client => $no_artifacts,) },
+    qr/auth\ agent\ did\ not\ return\ any\ artifacts/mx, 'a response without artifacts croaks';
+
+  my $no_result = t::irc_auth_helper::FakeClient->new(response => {type => 'response', ok => JSON::true,},);
+  like dies { Overnet::Program::IRC::Auth::Helper->run(%auth, client => $no_result,) },
+    qr/auth\ agent\ did\ not\ return\ any\ artifacts/mx, 'a response without a result croaks';
+};
+
+subtest 'undecodable SASL buffers are dropped instead of answered' => sub {
+  my $client = t::irc_auth_helper::FakeClient->new(response => _ok_response(),);
+
+  my @not_json = Overnet::Program::IRC::Auth::Helper->_flush_sasl_chunk_state(
+    client => $client,
+    state  => {buffer => encode_base64('not json', q{})},
+  );
+  is \@not_json, [], 'a buffer that is not JSON is dropped';
+
+  my @not_hash = Overnet::Program::IRC::Auth::Helper->_flush_sasl_chunk_state(
+    client => $client,
+    state  => {buffer => encode_base64('[1,2]', q{})},
+  );
+  is \@not_hash, [], 'a JSON array payload is dropped';
+
+  my @no_challenge = Overnet::Program::IRC::Auth::Helper->_flush_sasl_chunk_state(
+    client => $client,
+    state  => {buffer => encode_base64(JSON::encode_json({scope => 's',}), q{})},
+  );
+  is \@no_challenge, [], 'a payload without a challenge is dropped';
+
+  my @no_scope = Overnet::Program::IRC::Auth::Helper->_flush_sasl_chunk_state(
+    client => $client,
+    state  => {buffer => encode_base64(JSON::encode_json({challenge => 'c',}), q{})},
+  );
+  is \@no_scope, [], 'a payload without a scope is dropped';
+
+  my @ref_challenge = Overnet::Program::IRC::Auth::Helper->_flush_sasl_chunk_state(
+    client => $client,
+    state  => {buffer => encode_base64(JSON::encode_json({challenge => {}, scope => 's',}), q{})},
+  );
+  is \@ref_challenge, [], 'a payload with a reference challenge is dropped';
+
+  my @not_hash_payload = Overnet::Program::IRC::Auth::Helper->_render_sasl_response(
+    client            => $client,
+    challenge_payload => [],
+  );
+  is \@not_hash_payload, [], 'a non-hash challenge payload renders nothing';
+
+  is Overnet::Program::IRC::Auth::Helper::_sasl_delegate_required([]), 0,
+    'a non-hash payload never requires delegation';
+
+  is scalar @{$client->calls}, 0, 'no auth agent calls were made for dropped buffers';
+};
+
+subtest 'bridge stream output failures croak at every write site' => sub {
+  my $challenge = 'bcf8a952df516a8e691c6138496516abe84ccfefa9678f518bb52f70b1ca966f';
+  my $scope     = 'irc://irc.example.test/overnet';
+  my $sasl_line = 'AUTHENTICATE ' . encode_base64(
+    JSON::encode_json(
+      {
+        challenge => $challenge,
+        scope     => $scope,
+      }
+    ),
+    q{}
+  );
+  my $padded = _padded_sasl_payload(
+    {
+      challenge => $challenge,
+      scope     => $scope,
+    },
+    800,
+  );
+  my @padded_chunks = ($padded =~ /(.{1,400})/gmxs);
+
+  my %streams = (
+    'an OVERNETAUTH line write failure' => "-server- OVERNETAUTH CHALLENGE $challenge\r\n",
+    'a SASL response write failure'     => "$sasl_line\r\n",
+    'a mid-stream flush write failure'  =>
+      join(q{}, (map {"AUTHENTICATE $_\r\n"} @padded_chunks), ":server NOTICE alice :interrupt\r\n"),
+    'an EOF flush write failure' => join(q{}, map {"AUTHENTICATE $_\r\n"} @padded_chunks),
+  );
+
+  for my $case (sort keys %streams) {
+    my $input_text = $streams{$case};
+    open my $in,  '<', \$input_text or die "open input failed: $!";
+    open my $out, '>', '/dev/full'  or die "open /dev/full failed: $!";
+    $out->autoflush(1);
+
+    my $client = t::irc_auth_helper::FakeClient->new(response => _ok_response(),);
+    my $error  = eval {
+      Overnet::Program::IRC::Auth::Helper->run(
+        client  => $client,
+        command => 'bridge',
+        line    => q{},
+        scope   => $scope,
+        input   => $in,
+        output  => $out,
+        quote   => 0,
+      );
+      1;
+    } ? undef : $@;
+    like $error, qr/write\ bridge\ output\ failed/mx, "$case croaks";
+    {
+      no warnings 'io';
+      close $out;
+    }
+  }
+};
+
+subtest 'service identity descriptor branch corners' => sub {
+  my $client = t::irc_auth_helper::FakeClient->new(response => _ok_response(),);
+  my %auth   = (
+    command   => 'auth',
+    challenge => '6cf8a952df516a8e691c6138496516abe84ccfefa9678f518bb52f70b1ca966f',
+    scope     => 'irc://irc.example.test/overnet',
+  );
+
+  like dies {
+    Overnet::Program::IRC::Auth::Helper->run(
+      %auth,
+      client                   => $client,
+      service_identity_display => 'Display Only',
+    );
+  }, qr/--service-identity-scheme\ and\ --service-identity-value\ are\ required\ together/mx,
+    'a display without scheme and value croaks';
+
+  like dies {
+    Overnet::Program::IRC::Auth::Helper->run(
+      %auth,
+      client                  => $client,
+      service_identity_scheme => q{},
+      service_identity_value  => 'value-1',
+    );
+  }, qr/--service-identity-scheme\ and\ --service-identity-value\ are\ required\ together/mx,
+    'an empty scheme croaks even with a value';
+
+  my $output = Overnet::Program::IRC::Auth::Helper->run(
+    %auth,
+    client                   => $client,
+    service_identity_scheme  => 'nostr.pubkey',
+    service_identity_value   => ('a' x 64),
+    service_identity_display => q{},
+  );
+  like $output, qr/\S/mx, 'an empty display is dropped from the descriptor';
+  is $client->calls->[-1]{params}{service}{service_identity},
+    {
+    scheme => 'nostr.pubkey',
+    value  => ('a' x 64),
+    },
+    'the descriptor carries scheme and value without a display';
+};
+
+subtest 'malformed relay-backed SASL payloads croak after auth' => sub {
+  my $client = t::irc_auth_helper::FakeClient->new(response => _ok_response(),);
+  my $error  = eval {
+    Overnet::Program::IRC::Auth::Helper->consume_sasl_challenge_line(
+      client => $client,
+      state  => {},
+      line   => 'AUTHENTICATE '
+        . encode_base64(
+        JSON::encode_json(
+          {
+            challenge => ('9' x 64),
+            scope     => 'irc://irc.example.test/overnet',
+            relay_url => q{},
+          }
+        ),
+        q{}
+        ),
+    );
+    1;
+  } ? undef : $@;
+
+  like $error, qr/malformed\ SASL\ NOSTR\ challenge\ payload/mx,
+    'a relay-backed payload with an empty field croaks';
+  is scalar @{$client->calls}, 1, 'the auth artifact was requested before the malformed delegation was found';
+};
+
+subtest 'bridge streams flush pending SASL buffers mid-stream and at EOF' => sub {
+  my $challenge = 'acf8a952df516a8e691c6138496516abe84ccfefa9678f518bb52f70b1ca966f';
+  my $scope     = 'irc://irc.example.test/overnet';
+  my $payload   = _padded_sasl_payload(
+    {
+      challenge => $challenge,
+      scope     => $scope,
+    },
+    800,
+  );
+
+  my @chunks = ($payload =~ /(.{1,400})/gmxs);
+  is [map { length } @chunks], [400, 400], 'the padded payload splits into two full chunks';
+
+  my $input_text = join q{}, (map {"AUTHENTICATE $_\r\n"} @chunks), ":server NOTICE alice :interrupting line\r\n";
+  my $output     = '';
+  open my $in,  '<', \$input_text or die "open input failed: $!";
+  open my $out, '>', \$output     or die "open output failed: $!";
+
+  my $client = t::irc_auth_helper::FakeClient->new(response => _ok_response(),);
+  my $count  = Overnet::Program::IRC::Auth::Helper->run(
+    client  => $client,
+    command => 'bridge',
+    input   => $in,
+    output  => $out,
+    quote   => 0,
+  );
+  close $out or die "close output failed: $!";
+  ok $count > 0, 'the interrupted stream still produced SASL responses';
+  like $output, qr/\AAUTHENTICATE\ \S+/mx, 'the mid-stream flush answered the challenge';
+  is scalar @{$client->calls}, 1, 'the auth agent was called once for the mid-stream flush';
+
+  my $eof_text   = join q{}, map {"AUTHENTICATE $_\r\n"} @chunks;
+  my $eof_output = '';
+  open my $eof_in,  '<', \$eof_text   or die "open input failed: $!";
+  open my $eof_out, '>', \$eof_output or die "open output failed: $!";
+
+  my $eof_client = t::irc_auth_helper::FakeClient->new(response => _ok_response(),);
+  my $eof_count  = Overnet::Program::IRC::Auth::Helper->run(
+    client  => $eof_client,
+    command => 'bridge',
+    input   => $eof_in,
+    output  => $eof_out,
+    quote   => 0,
+  );
+  close $eof_out or die "close output failed: $!";
+  ok $eof_count > 0, 'a stream ending in a full chunk flushes at EOF';
+  like $eof_output, qr/\AAUTHENTICATE\ \S+/mx, 'the EOF flush answered the challenge';
+};
+
+sub _ok_response {
+  return {
+    type   => 'response',
+    id     => 'auth-1',
+    ok     => JSON::true,
+    result => {
+      artifacts => [
+        {
+          type   => 'nostr.event',
+          format => 'nostr.event',
+          value  => {
+            id         => ('1' x 64),
+            pubkey     => ('2' x 64),
+            created_at => 1744301000,
+            kind       => 22242,
+            tags       => [],
+            content    => '',
+            sig        => ('3' x 128),
+          },
+        },
+      ],
+    },
+  };
+}
+
+sub _padded_sasl_payload {
+  my ($payload, $wanted_length) = @_;
+  for my $pad_length (0 .. $wanted_length) {
+    my %padded  = (%{$payload}, pad => ('x' x $pad_length),);
+    my $encoded = encode_base64(JSON::encode_json(\%padded), q{});
+    return $encoded if length($encoded) == $wanted_length;
+  }
+  die "Can't pad a SASL payload to $wanted_length base64 bytes";
+}
+
 sub _authenticate_input_lines {
   my ($payload) = @_;
   my $encoded = encode_base64(JSON::encode_json($payload), '');
