@@ -58,5 +58,6 @@ t/script-proxy.t
 t/script-service.t
 t/script-server.t
 t/script-util.t
+t/server-authority-state.t
 t/server-commands.t
 t/write-failures.t
