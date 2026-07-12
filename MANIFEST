@@ -33,6 +33,7 @@ README.md
 t/00-load.t
 t/bin-syntax.t
 t/command-auth.t
+t/command-channel.t
 t/host-cloak.t
 t/irc-auth-cli.t
 t/irc-auth-daemon-e2e.t
