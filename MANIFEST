@@ -45,9 +45,14 @@ t/makemaker-metadata.t
 t/manifest-skip-policy.t
 t/readme-auth.t
 t/renderer.t
+t/script-auth.t
 t/script-authority-relay-service.t
 t/script-authority-relay.t
+t/script-chat-client.t
+t/script-local-server.t
 t/script-main.t
+t/script-proxy.t
+t/script-service.t
 t/script-server.t
 t/script-util.t
 t/write-failures.t
