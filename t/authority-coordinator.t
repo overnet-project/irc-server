@@ -450,6 +450,14 @@ subtest 'the channel cache refreshes, reads, and reconciles' => sub {
 
   is $server->_reconcile_authoritative_pending_invites_from_refresh(
     channel    => $channel,
+    old_view   => undef,
+    old_events => [_group_event()],
+    new_view   => {pending_invites => [],},
+    new_events => [_group_event(), {%{$invite_event}, id => 'f' x 64,},],
+  ), 1, 'a refresh without a prior view still reconciles new invites';
+
+  is $server->_reconcile_authoritative_pending_invites_from_refresh(
+    channel    => $channel,
     old_view   => {},
     old_events => [$invite_event],
     new_view   => {pending_invites => [],},

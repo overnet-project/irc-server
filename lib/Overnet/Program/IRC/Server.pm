@@ -5762,22 +5762,24 @@ sub _update_authoritative_channel_cache_with_event {
     }
     my $sorted_events = $self->_sort_authoritative_events(\@events);
     my $new_view      = $self->_derive_authoritative_channel_view_from_events($canonical, $sorted_events);
+    my $new_state     = $self->_authoritative_channel_state_from_view($new_view);
     $new_cache = $self->{authoritative_channel_cache}{$canonical} = {
       %{$cache},
       events       => $sorted_events,
       view         => $new_view,
-      state        => $self->_authoritative_channel_state_from_view($new_view),
+      state        => $new_state,
       refreshed_at => time(),
     };
     return 1 if $already_cached;
   } else {
     my $sorted_events = $self->_sort_authoritative_events([$event]);
     my $new_view      = $self->_derive_authoritative_channel_view_from_events($canonical, $sorted_events);
+    my $new_state     = $self->_authoritative_channel_state_from_view($new_view);
     $new_cache = $self->{authoritative_channel_cache}{$canonical} = {
       %{$cache},
       events       => $sorted_events,
       view         => $new_view,
-      state        => $self->_authoritative_channel_state_from_view($new_view),
+      state        => $new_state,
       refreshed_at => time(),
     };
   }
@@ -5818,7 +5820,9 @@ sub _reconcile_authoritative_pending_invites_from_refresh {
   my %old_ids = map { (defined($_->{id}) && !ref($_->{id}) && length($_->{id})) ? ($_->{id} => 1) : () }
     grep { ref eq 'HASH' } @{$old_events};
 
-  my $count = 0;
+  my $old_state = $self->_authoritative_channel_state_from_view($old_view);
+  my $new_state = $self->_authoritative_channel_state_from_view($new_view);
+  my $count     = 0;
   for my $event (@{$new_events}) {
     if (!(ref($event) eq 'HASH')) {
       next;
@@ -5839,8 +5843,8 @@ sub _reconcile_authoritative_pending_invites_from_refresh {
       event     => $event,
       old_view  => $old_view,
       new_view  => $new_view,
-      old_state => $self->_authoritative_channel_state_from_view($old_view),
-      new_state => $self->_authoritative_channel_state_from_view($new_view),
+      old_state => $old_state,
+      new_state => $new_state,
     ) || 0;
   }
 

@@ -1298,6 +1298,25 @@ subtest 'derive and cache corners' => sub {
     event   => {id => '5' x 64, kind => 9021, created_at => 1,},
   ), 1, 'an already-cached event id returns early';
 
+  my $viewless = _server();
+  $viewless->request_handler(sub { return {} });
+  is $viewless->_update_authoritative_channel_cache_with_event(
+    channel => $channel,
+    event   => {id => '6' x 64, kind => 9021, created_at => 1, tags => [],},
+  ), 1, 'an underivable view still updates a fresh cache';
+  is $viewless->{authoritative_channel_cache}{$channel}{view}, undef,
+    'the underivable view is cached as absent';
+  is $viewless->{authoritative_channel_cache}{$channel}{state}, undef,
+    'the underivable view caches no state';
+  is $viewless->_update_authoritative_channel_cache_with_event(
+    channel => $channel,
+    event   => {id => '7' x 64, kind => 9021, created_at => 2, tags => [],},
+  ), 1, 'an underivable view still updates an existing cache';
+  is scalar(@{$viewless->{authoritative_channel_cache}{$channel}{events}}), 2,
+    'the underivable-view cache keeps accumulating events';
+  is $viewless->{authoritative_channel_cache}{$channel}{state}, undef,
+    'the refreshed cache keeps an absent state';
+
   my $stateless = _server();
   $stateless->request_handler(sub { return {} });
   is $stateless->_apply_authoritative_channel_cache_update(
