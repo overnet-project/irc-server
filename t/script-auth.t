@@ -57,6 +57,8 @@ subtest 'a missing command prints usage and fails' => sub {
 
   my $empty = _run(q{});
   is $empty->{exit}, 1, 'an empty command fails';
+  like $empty->{stdout}, qr/Usage:/mxs, 'an empty command prints usage to stdout';
+  is $empty->{stderr}, q{}, 'an empty command prints nothing to stderr';
 };
 
 subtest 'an unknown command prints usage to stderr' => sub {
