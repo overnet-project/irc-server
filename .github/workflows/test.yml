@@ -86,9 +86,6 @@ jobs:
       PERL_LOCAL_LIB_ROOT: /home/runner/perl5
       PERL_MB_OPT: --install_base /home/runner/perl5
       PERL_MM_OPT: INSTALL_BASE=/home/runner/perl5
-    defaults:
-      run:
-        working-directory: irc-server
 
     steps:
       - uses: actions/checkout@v4
@@ -124,6 +121,7 @@ jobs:
           echo "$HOME/perl5/bin" >> "$GITHUB_PATH"
 
       - name: Enforce per-file coverage floors
+        working-directory: irc-server
         env:
           OVERNET_COVERAGE: '1'
         run: prove -l -v xt/author/devel-cover.t
