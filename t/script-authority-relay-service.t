@@ -246,4 +246,70 @@ subtest 'run stops the child when readiness fails' => sub {
     'a readiness failure is propagated after stopping the child';
 };
 
+subtest '_spawn_relay_child forwards each snapshot pubkey as a --snapshot-pubkey argument' => sub {
+  my @command;
+  my $spawn = mock $package => (override => [_spawn_child => sub { @command = @_; return {pid => 4321} }],);
+  Overnet::Program::IRC::Script::AuthorityRelayService::_spawn_relay_child(
+    {
+      host             => '127.0.0.1',
+      port             => 0,
+      relay_url        => 'ws://127.0.0.1:0',
+      grant_kind       => 14_142,
+      store_file       => '/tmp/store.json',
+      snapshot_pubkeys => ['a' x 64, 'b' x 64],
+    }
+  );
+  my @forwarded;
+  for my $i (0 .. $#command - 1) {
+    push @forwarded, $command[$i + 1] if $command[$i] eq '--snapshot-pubkey';
+  }
+  is \@forwarded, ['a' x 64, 'b' x 64], 'both snapshot pubkeys are forwarded to the relay child';
+};
+
+subtest '_fill_defaults replaces an empty relay URL and store file with derived defaults' => sub {
+  my $options = {
+    host       => '192.0.2.7',
+    port       => 7_002,
+    relay_url  => q{},
+    store_file => q{},
+  };
+  {
+    local $ENV{XDG_STATE_HOME} = $tempdir;
+    Overnet::Program::IRC::Script::AuthorityRelayService::_fill_defaults($options);
+  }
+  is $options->{relay_url}, 'ws://192.0.2.7:7002', 'an empty relay URL is replaced with the derived default';
+  is $options->{store_file}, File::Spec->catfile($tempdir, 'irc-server', 'authority-relay-store.json'),
+    'an empty store file is replaced with the derived default';
+};
+
+subtest 'lifecycle health details report the positive numeric listen port' => sub {
+  my $health_file = File::Spec->catfile($tempdir, 'listen-port-health.json');
+  my $options     = {
+    host      => '127.0.0.1',
+    port      => '7448',
+    relay_url => 'ws://127.0.0.1:7448',
+  };
+
+  Overnet::Program::IRC::Script::AuthorityRelayService::_write_stopping_health($health_file, $options);
+  is _read_health($health_file)->{details}{listen_port}, 7_448, 'stopping health reports the positive listen port';
+
+  Overnet::Program::IRC::Script::AuthorityRelayService::_write_stopped_health($health_file, $options);
+  is _read_health($health_file)->{details}{listen_port}, 7_448, 'stopped health reports the positive listen port';
+};
+
+subtest '_stop_child honours the graceful deadline before force-killing a stubborn child' => sub {
+  my $stubborn = _spawn_sleeper(q{$SIG{TERM} = 'IGNORE';});
+  sleep 0.2;
+  my $pid   = $stubborn->{pid};
+  my $start = Time::HiRes::time();
+  is Overnet::Program::IRC::Script::AuthorityRelayService::_stop_child($stubborn), 1, 'stop_child returns after killing';
+  my $elapsed = Time::HiRes::time() - $start;
+  ok $elapsed >= 2, 'stop_child waits the graceful deadline before escalating to SIGKILL';
+  is waitpid($pid, POSIX::WNOHANG()), -1, 'the stubborn child was force-killed and reaped';
+
+  # Guard against a mutant that leaves the child running: never leak the sleeper.
+  kill 'KILL', $pid;
+  waitpid $pid, 0;
+};
+
 done_testing;
