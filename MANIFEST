@@ -4,6 +4,12 @@ deploy/canary/irc/overnet-irc.env.example
 deploy/canary/README.md
 deploy/canary/relay-a/overnet-irc-authority-relay.env.example
 deploy/canary/relay-b/overnet-irc-authority-relay.env.example
+deploy/podman/Containerfile
+deploy/podman/README.md
+deploy/podman/overnet-irc.container
+deploy/podman/overnet-irc.volume
+deploy/podman/quadlet-check.sh
+deploy/podman/smoke-test.sh
 deploy/systemd/overnet-irc-authority-relay@.service
 deploy/systemd/overnet-irc.env.example
 deploy/systemd/overnet-irc.service
@@ -35,6 +41,7 @@ t/authority-coordinator.t
 t/bin-syntax.t
 t/command-auth.t
 t/command-channel.t
+t/deploy-podman-packaging.t
 t/host-cloak.t
 t/irc-auth-cli.t
 t/irc-auth-daemon-e2e.t

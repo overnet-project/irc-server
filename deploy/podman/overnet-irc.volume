@@ -1,0 +1,15 @@
+# Quadlet named-volume unit for the Overnet IRC server state.
+#
+# Install alongside overnet-irc.container in the systemd unit search path
+# (rootless: ~/.config/containers/systemd/). Because VolumeName is set below,
+# the created podman volume is named `overnet-irc-state` verbatim (without the
+# systemd- prefix Quadlet would add by default). The .container unit references
+# this unit by its file name (overnet-irc.volume).
+#
+# The volume holds the auto-generated signing key, so it MUST persist: losing it
+# changes the server's Nostr identity.
+[Unit]
+Description=Overnet IRC server state volume
+
+[Volume]
+VolumeName=overnet-irc-state

@@ -1,0 +1,63 @@
+# Quadlet unit for the Overnet IRC server (rootless podman).
+#
+# Install into the systemd unit search path and reload:
+#
+#   mkdir -p ~/.config/containers/systemd
+#   cp overnet-irc.container overnet-irc.volume ~/.config/containers/systemd/
+#   systemctl --user daemon-reload
+#   systemctl --user start overnet-irc
+#
+# Quadlet generates a transient overnet-irc.service from this file. Tune the
+# deployment by editing the Exec= arguments below in place and re-running
+# `systemctl --user daemon-reload`.
+[Unit]
+Description=Overnet IRC server (rootless podman)
+Documentation=https://github.com/overnet-project/irc-server
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+ContainerName=overnet-irc
+Image=localhost/overnet-irc:latest
+
+# Persistent state. The reference must match the sibling unit's file name
+# (overnet-irc.volume); that unit sets VolumeName=overnet-irc-state, so the
+# actual podman volume is named overnet-irc-state. It holds the signing key,
+# which must survive restarts.
+Volume=overnet-irc.volume:/var/lib/overnet/irc:Z
+
+# Publish the IRC listener on loopback only. Front it with a TLS-terminating
+# reverse proxy for public exposure, or change the bind address (for example
+# 0.0.0.0:6667:6667) to expose it directly.
+PublishPort=127.0.0.1:6667:6667
+
+# IRC service invocation. The image entrypoint is `overnet-irc-server service`;
+# these arguments configure it. The --signing-key-file and --health-file paths
+# must stay inside the mounted volume above so the identity and state persist.
+#
+# To serve authoritative (NIP-29) hosted channels, add a line pointing at your
+# relay, e.g.:  --authority-relay-url ws://overnet-relay:7447
+Exec=--adapter-id irc.public \
+  --network overnet \
+  --listen-host 0.0.0.0 \
+  --listen-port 6667 \
+  --server-name irc.overnet.local \
+  --group-host groups.overnet.local \
+  --signing-key-file /var/lib/overnet/irc/signing-key.pem \
+  --health-file /var/lib/overnet/irc/health.json
+
+# Liveness probe: the IRC listener must accept a TCP connection. IO::Socket::INET
+# is a core module, so this needs nothing beyond perl.
+HealthCmd=perl -MIO::Socket::INET -e "IO::Socket::INET->new(PeerAddr => '127.0.0.1:6667', Timeout => 3) or exit 1"
+HealthInterval=30s
+HealthTimeout=5s
+HealthStartPeriod=15s
+HealthRetries=3
+
+[Service]
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=120
+
+[Install]
+WantedBy=default.target

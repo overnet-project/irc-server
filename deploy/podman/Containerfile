@@ -1,0 +1,78 @@
+# Overnet IRC server container image (rootless podman friendly).
+#
+# The IRC frontend uses Overnet core, Overnet::Relay, and the IRC adapter from
+# their sibling source trees (none are published to CPAN under the names the
+# programs require), so the build context must contain core-perl/, relay-perl/,
+# adapter-irc-perl/, and irc-server/ as sibling directories, exactly as they are
+# laid out in a normal Overnet workspace.
+#
+# Build (run from the workspace directory that holds all four checkouts):
+#
+#   podman build \
+#     --file irc-server/deploy/podman/Containerfile \
+#     --tag overnet-irc:latest \
+#     .
+#
+FROM docker.io/library/perl:5.40-slim
+
+# Overnet core and Overnet::Relay are consumed from their source trees, so they
+# must be visible on @INC before cpanm resolves the IRC server's prerequisites,
+# and again at run time -- the service supervisor spawns a child perl process
+# that inherits this path. The IRC adapter is loaded at run time from its
+# sibling checkout via a path the program derives from bin/.
+ENV OVERNET_ROOT=/opt/overnet
+ENV PERL5LIB=/opt/overnet/core-perl/lib:/opt/overnet/relay-perl/lib
+
+# Toolchain for XS prerequisites (CryptX, IO::Socket::SSL, Math::GMPz, ...).
+RUN apt-get update \
+  && apt-get install --yes --no-install-recommends \
+       build-essential \
+       libssl-dev \
+       libgmp-dev \
+       zlib1g-dev \
+  && rm -rf /var/lib/apt/lists/*
+
+# Net::Nostr::Core requires Crypt::PK::ECC::Schnorr, a distribution that lives
+# on CPAN (author GUL) but is not indexed under its module name, because CryptX
+# owns the Crypt::PK::ECC namespace, so cpanm cannot resolve it by name during
+# --installdeps and bails. Install it explicitly by author path first; doing so
+# also pulls its Math::GMPz (hence libgmp-dev above) and CryptX prerequisites.
+RUN cpanm --notest GUL/Crypt-PK-ECC-Schnorr-0.01.tar.gz
+
+WORKDIR /opt/overnet
+COPY core-perl        /opt/overnet/core-perl
+COPY relay-perl       /opt/overnet/relay-perl
+COPY adapter-irc-perl /opt/overnet/adapter-irc-perl
+COPY irc-server       /opt/overnet/irc-server
+
+RUN cpanm --notest --installdeps /opt/overnet/core-perl \
+  && cpanm --notest --installdeps /opt/overnet/relay-perl \
+  && cpanm --notest --installdeps /opt/overnet/adapter-irc-perl \
+  && cpanm --notest --installdeps /opt/overnet/irc-server \
+  && rm -rf /root/.cpanm
+
+# Run as an unprivileged in-container account, matching the rootless model, and
+# pre-create the state directory (signing key, health file) owned by it.
+RUN useradd --create-home --uid 10001 overnet \
+  && mkdir -p /var/lib/overnet/irc \
+  && chown -R overnet:overnet /var/lib/overnet
+USER overnet
+
+# Persistent state (the auto-generated signing key must survive restarts).
+VOLUME /var/lib/overnet/irc
+
+# IRC listener inside the container network namespace. Host exposure is
+# controlled separately (PublishPort in the Quadlet unit).
+EXPOSE 6667
+
+# The image runs the IRC service supervisor. Runtime arguments are supplied by
+# the Quadlet unit's Exec= line (or `podman run` arguments); the defaults below
+# make a bare `podman run overnet-irc` usable as a standalone IRC frontend.
+ENTRYPOINT ["perl", "/opt/overnet/irc-server/bin/overnet-irc-server", "service"]
+CMD ["--adapter-id", "irc.public", \
+     "--network", "overnet", \
+     "--listen-host", "0.0.0.0", \
+     "--listen-port", "6667", \
+     "--server-name", "irc.overnet.local", \
+     "--signing-key-file", "/var/lib/overnet/irc/signing-key.pem", \
+     "--health-file", "/var/lib/overnet/irc/health.json"]
