@@ -108,4 +108,38 @@ for my $sibling (qw(core-perl relay-perl adapter-irc-perl)) {
     "workflow checks out the $sibling sibling";
 }
 
+# --- integrated frontend <-> authority-relay round-trip ----------------------
+
+my $integ_test   = File::Spec->catfile($podman_dir, 'integration-test.sh');
+my $integ_client = File::Spec->catfile($podman_dir, 'integration-client.pl');
+my $integ_wf = File::Spec->catfile($code_root, '.github', 'workflows', 'integration.yml');
+
+ok -f $integ_test && -s $integ_test,     'integration-test orchestrator exists and is non-empty';
+ok -x $integ_test,                       'integration-test orchestrator is executable';
+ok -f $integ_client && -s $integ_client, 'integration client exists and is non-empty';
+ok -f $integ_wf,                         'integration workflow exists';
+
+# The client must compile and depend only on modules present in the image.
+my $client_text = _slurp($integ_client);
+unlike $client_text, qr{use\s+Test}mx,
+  'integration client does not depend on test-only modules';
+
+my $integ_test_text = _slurp($integ_test);
+like $integ_test_text, qr{overnet-authority-relay\.pl}mx,
+  'integration test launches the authority relay entrypoint';
+like $integ_test_text, qr{--authority-relay-url}mx,
+  'integration test wires the frontend to the relay';
+like $integ_test_text, qr{integration-client\.pl}mx,
+  'integration test drives the handshake client';
+like $integ_test_text, qr{"kind":14142}mx,
+  'integration test asserts the published grant reached the relay store';
+
+my $integ_wf_text = _slurp($integ_wf);
+like $integ_wf_text, qr{relay-perl/deploy/podman/Containerfile}mx,
+  'integration workflow builds the relay image';
+like $integ_wf_text, qr{irc-server/deploy/podman/Containerfile}mx,
+  'integration workflow builds the IRC image';
+like $integ_wf_text, qr{integration-test\.sh}mx,
+  'integration workflow runs the round-trip test';
+
 done_testing;

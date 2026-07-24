@@ -6,6 +6,8 @@ deploy/canary/relay-a/overnet-irc-authority-relay.env.example
 deploy/canary/relay-b/overnet-irc-authority-relay.env.example
 deploy/podman/Containerfile
 deploy/podman/README.md
+deploy/podman/integration-client.pl
+deploy/podman/integration-test.sh
 deploy/podman/overnet-irc.container
 deploy/podman/overnet-irc.volume
 deploy/podman/quadlet-check.sh

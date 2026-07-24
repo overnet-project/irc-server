@@ -1,0 +1,69 @@
+name: integration
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/integration.yml'
+      - 'deploy/podman/**'
+      - 'bin/**'
+      - 'lib/**'
+      - 'Makefile.PL'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/integration.yml'
+      - 'deploy/podman/**'
+      - 'bin/**'
+      - 'lib/**'
+      - 'Makefile.PL'
+
+permissions:
+  contents: read
+
+jobs:
+  frontend-relay-round-trip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    name: IRC frontend <-> authority relay round-trip
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: irc-server
+
+      - uses: actions/checkout@v4
+        with:
+          repository: overnet-project/core-perl
+          path: core-perl
+
+      - uses: actions/checkout@v4
+        with:
+          repository: overnet-project/relay-perl
+          path: relay-perl
+
+      - uses: actions/checkout@v4
+        with:
+          repository: overnet-project/adapter-irc-perl
+          path: adapter-irc-perl
+
+      - name: Podman version
+        run: podman version
+
+      # The authority relay ships from the relay image; the frontend from the
+      # IRC image. Both build from the same sibling checkouts.
+      - name: Build the relay image
+        run: |
+          podman build \
+            --file relay-perl/deploy/podman/Containerfile \
+            --tag overnet-relay:ci \
+            "$GITHUB_WORKSPACE"
+
+      - name: Build the IRC server image
+        run: |
+          podman build \
+            --file irc-server/deploy/podman/Containerfile \
+            --tag overnet-irc:ci \
+            "$GITHUB_WORKSPACE"
+
+      - name: Frontend <-> authority relay round-trip
+        run: irc-server/deploy/podman/integration-test.sh overnet-irc:ci overnet-relay:ci
