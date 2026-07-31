@@ -17,6 +17,14 @@ sub run {
   }
 
   my $command = shift @argv;
+
+  # init takes its own options and needs no auth agent to talk to: it is what
+  # you run to create the config the agent will later be started with.
+  if (defined $command && $command eq 'init') {
+    require Overnet::Program::IRC::Script::AuthInit;
+    return Overnet::Program::IRC::Script::AuthInit->run(@argv);
+  }
+
   my %options = (
     interactive => 1,
     program_id  => 'irc.bridge',
