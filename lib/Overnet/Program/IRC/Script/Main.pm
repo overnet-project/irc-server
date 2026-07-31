@@ -7,13 +7,14 @@ use English qw(-no_match_vars);
 our $VERSION = '0.001';
 
 my @COMMANDS = (
-  ['auth',                    'Overnet::Program::IRC::Script::Auth',           'Run auth-agent IRC helpers'],
-  ['proxy',                   'Overnet::Program::IRC::Script::Proxy',          'Run the local auth-hiding IRC proxy'],
-  ['server',                  'Overnet::Program::IRC::Script::Server',         'Run the hosted IRC server program'],
-  ['service',                 'Overnet::Program::IRC::Script::Service',        'Run the IRC service wrapper'],
-  ['local-server',            'Overnet::Program::IRC::Script::LocalServer',    'Run the local demo server'],
-  ['chat-client',             'Overnet::Program::IRC::Script::ChatClient',     'Run the local demo chat client'],
-  ['authority-relay',         'Overnet::Program::IRC::Script::AuthorityRelay', 'Run the authoritative IRC relay'],
+  ['keygen',          'Overnet::Program::IRC::Script::Keygen',      'Create the Nostr identity you authenticate with'],
+  ['auth',            'Overnet::Program::IRC::Script::Auth',        'Run auth-agent IRC helpers'],
+  ['proxy',           'Overnet::Program::IRC::Script::Proxy',       'Run the local auth-hiding IRC proxy'],
+  ['server',          'Overnet::Program::IRC::Script::Server',      'Run the hosted IRC server program'],
+  ['service',         'Overnet::Program::IRC::Script::Service',     'Run the IRC service wrapper'],
+  ['local-server',    'Overnet::Program::IRC::Script::LocalServer', 'Run the local demo server'],
+  ['chat-client',     'Overnet::Program::IRC::Script::ChatClient',  'Run the local demo chat client'],
+  ['authority-relay', 'Overnet::Program::IRC::Script::AuthorityRelay', 'Run the authoritative IRC relay'],
   ['authority-relay-service', 'Overnet::Program::IRC::Script::AuthorityRelayService', 'Run the relay service wrapper'],
 );
 my %COMMAND = map { $_->[0] => $_ } @COMMANDS;
