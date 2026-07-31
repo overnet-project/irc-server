@@ -297,7 +297,15 @@ sub _authorize_artifact {
   );
 
   if (!(ref($response) eq 'HASH' && $response->{ok})) {
-    croak _error_message($response);
+    croak _error_message($response)
+      . _policy_hint(
+      response    => $response,
+      program_id  => $program_id,
+      identity_id => $args{identity_id},
+      scope       => $scope,
+      locator     => $locator,
+      action      => $args{action},
+      );
   }
 
   if (
@@ -509,6 +517,46 @@ sub _service_identity_descriptor {
   }
 
   return \%descriptor;
+}
+
+# The agent exposes no approval UI, so with no matching policy it fails closed
+# with auth.headless_unavailable -- whose message says only that approval is
+# unavailable. That is the likeliest failure a new user meets, and on its own it
+# names none of the four values that must match, so there is no way to tell
+# which one is wrong. All of them are known here, at the point of failure, so
+# say what would authorize this exact request.
+#
+# Only for that one code: a refusal the user made deliberately (auth.denied)
+# must not be answered with instructions for overriding it.
+sub _policy_hint {
+  my (%args) = @_;
+
+  my $code =
+    ref($args{response}) eq 'HASH' && ref($args{response}{error}) eq 'HASH'
+    ? $args{response}{error}{code}
+    : undef;
+  if (!(defined $code && !ref($code) && $code eq 'auth.headless_unavailable')) {
+    return q{};
+  }
+
+  my @grant = ('overnet-auth.pl policy-grant');
+  if (defined $args{identity_id} && !ref($args{identity_id}) && length $args{identity_id}) {
+    push @grant, "--identity-id $args{identity_id}";
+  }
+  for my $field (['program_id', '--program-id'], ['scope', '--scope'], ['action', '--action'],) {
+    my ($key, $flag) = @{$field};
+    my $value = $args{$key};
+    next if !(defined $value && !ref($value) && length $value);
+    push @grant, "$flag $value";
+  }
+  if (defined $args{locator} && !ref($args{locator}) && length $args{locator}) {
+    push @grant, "--service-locator $args{locator}";
+  }
+
+  return
+      "no policy authorizes this request, and this agent cannot ask you to approve one.\n"
+    . "grant it with:\n  "
+    . join(q{ }, @grant) . "\n";
 }
 
 sub _error_message {

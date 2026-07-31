@@ -758,8 +758,7 @@ subtest 'run rejects unsupported commands and missing arguments' => sub {
 
   like dies { Overnet::Program::IRC::Auth::Helper->run(command => 'frobnicate') },
     qr/unsupported\ command:\ frobnicate/mx, 'an unsupported command croaks';
-  like dies { Overnet::Program::IRC::Auth::Helper->run() },
-    qr/unsupported\ command:/mx, 'a missing command croaks';
+  like dies { Overnet::Program::IRC::Auth::Helper->run() }, qr/unsupported\ command:/mx, 'a missing command croaks';
 
   like dies {
     Overnet::Program::IRC::Auth::Helper->run(client => $client, command => 'auth', challenge => q{}, scope => 's',);
@@ -866,6 +865,68 @@ subtest 'auth agent failures are reported with usable messages' => sub {
     qr/auth\ agent\ did\ not\ return\ any\ artifacts/mx, 'a response without a result croaks';
 };
 
+# The agent has no approval UI: absent a matching policy it fails closed with
+# auth.headless_unavailable, whose message says only that approval is
+# unavailable. That is the single most likely failure for a new user, and on its
+# own it names none of the four values that have to match -- so the person who
+# hit it cannot tell which one is wrong, or what to do about it.
+#
+# Every one of those values is known here, at the moment of failure.
+subtest q{a policy miss says exactly which grant would fix it} => sub {
+  my %auth = (
+    command   => q{auth},
+    challenge => q{6cf8a952df516a8e691c6138496516abe84ccfefa9678f518bb52f70b1ca966f},
+    scope     => q{irc://irc.example.test/overnet},
+  );
+
+  my $denied = t::irc_auth_helper::FakeClient->new(
+    response => {
+      type  => 'response',
+      ok    => JSON::false,
+      error => {
+        code    => 'auth.headless_unavailable',
+        message => 'approval is required but interactive approval is unavailable',
+      },
+    },
+  );
+
+  my $error = dies {
+    Overnet::Program::IRC::Auth::Helper->run(
+      %auth,
+      client      => $denied,
+      program_id  => 'irc.proxy',
+      identity_id => 'default',
+    );
+  };
+
+  like $error, qr/auth[.]headless_unavailable/mx,                 'the agent\'s own reason is still reported';
+  like $error, qr/policy-grant/mx,                                'and the command that would authorize it is named';
+  like $error, qr/--program-id\ irc[.]proxy/mx,                   'carrying the program id that was refused';
+  like $error, qr{--action\ session[.]authenticate}mx,            q{the action that was refused};
+  like $error, qr{--scope\ \Qirc://irc.example.test/overnet\E}mx, q{and the scope it was refused for};
+};
+
+subtest q{a failure that is not a policy miss is not dressed up as one} => sub {
+  my %auth = (
+    command   => q{auth},
+    challenge => q{6cf8a952df516a8e691c6138496516abe84ccfefa9678f518bb52f70b1ca966f},
+    scope     => q{irc://irc.example.test/overnet},
+  );
+
+  my $other = t::irc_auth_helper::FakeClient->new(
+    response => {
+      type  => 'response',
+      ok    => JSON::false,
+      error => {code => 'auth.denied', message => 'the user said no',},
+    },
+  );
+
+  my $error = dies { Overnet::Program::IRC::Auth::Helper->run(%auth, client => $other,) };
+  like $error, qr/auth[.]denied/mx, 'the reason is reported';
+  unlike $error, qr/policy-grant/mx,
+    'a refusal the user made deliberately is not answered with instructions to override it';
+};
+
 subtest 'undecodable SASL buffers are dropped instead of answered' => sub {
   my $client = t::irc_auth_helper::FakeClient->new(response => _ok_response(),);
 
@@ -914,7 +975,8 @@ subtest 'undecodable SASL buffers are dropped instead of answered' => sub {
 subtest 'bridge stream output failures croak at every write site' => sub {
   my $challenge = 'bcf8a952df516a8e691c6138496516abe84ccfefa9678f518bb52f70b1ca966f';
   my $scope     = 'irc://irc.example.test/overnet';
-  my $sasl_line = 'AUTHENTICATE ' . encode_base64(
+  my $sasl_line = 'AUTHENTICATE '
+    . encode_base64(
     JSON::encode_json(
       {
         challenge => $challenge,
@@ -922,7 +984,7 @@ subtest 'bridge stream output failures croak at every write site' => sub {
       }
     ),
     q{}
-  );
+    );
   my $padded = _padded_sasl_payload(
     {
       challenge => $challenge,
@@ -1031,8 +1093,7 @@ subtest 'malformed relay-backed SASL payloads croak after auth' => sub {
     1;
   } ? undef : $@;
 
-  like $error, qr/malformed\ SASL\ NOSTR\ challenge\ payload/mx,
-    'a relay-backed payload with an empty field croaks';
+  like $error, qr/malformed\ SASL\ NOSTR\ challenge\ payload/mx, 'a relay-backed payload with an empty field croaks';
   is scalar @{$client->calls}, 1, 'the auth artifact was requested before the malformed delegation was found';
 };
 
@@ -1048,7 +1109,7 @@ subtest 'bridge streams flush pending SASL buffers mid-stream and at EOF' => sub
   );
 
   my @chunks = ($payload =~ /(.{1,400})/gmxs);
-  is [map { length } @chunks], [400, 400], 'the padded payload splits into two full chunks';
+  is [map {length} @chunks], [400, 400], 'the padded payload splits into two full chunks';
 
   my $input_text = join q{}, (map {"AUTHENTICATE $_\r\n"} @chunks), ":server NOTICE alice :interrupting line\r\n";
   my $output     = '';

@@ -23,7 +23,68 @@ perl bin/overnet-irc-server chat-client --nick bob
 
 By default the client auto-joins `#overnet`. Plain text sends to the current target.
 
+## Connecting to an authenticated server
+
+An Overnet IRC server does not take a password. It asks your client to sign two
+Nostr events: one proving which key you are, and one delegating limited
+authority to the server for this session. Ordinary IRC clients cannot do that,
+so a local proxy does it for you, signing through an auth agent that holds your
+key.
+
+You need three things: an identity, a config telling the agent what that
+identity may authorize, and the two local processes. Start to finish:
+
+```bash
+# 1. Create your identity. Print it again later with --show.
+overnet-irc-server keygen
+
+# 2. Write the auth-agent config for the server you are joining.
+#    --server-name and --network must match what the server announces.
+overnet-irc-server auth init \
+  --server-name irc.example.net --network overnet \
+  --key-file ~/.local/state/overnet/id.pem
+
+# 3. Run the auth agent (stays in the foreground).
+overnet-auth-agent.pl --config-file ~/.local/state/overnet/auth-agent.json
+
+# 4. In another terminal, run the proxy (also stays in the foreground).
+export OVERNET_AUTH_SOCK=~/.local/state/overnet/auth.sock
+overnet-irc-server proxy \
+  --server-host irc.example.net --server-port 6697 --server-tls
+```
+
+Then point your IRC client at the proxy, with no SASL or scripts configured:
+
+```
+# irssi
+/connect 127.0.0.1 16668
+
+# weechat
+/server add overnet 127.0.0.1/16668
+/connect overnet
+```
+
+`keygen` prints your public key, and step 2 prints it again. That key is your
+account: give it to the server operator so they can admit you to a channel, and
+keep the private half safe, because every membership and operator right the
+relay records is bound to it and can be recovered from nothing else.
+
+Two things are worth knowing before they surprise you:
+
+- The proxy serves **one client connection at a time**, and it hides IRCv3
+  capabilities from the client, so `server-time`, `account-tag` and friends do
+  not reach irssi or weechat.
+- If the agent has no policy matching the request, it fails closed — it has no
+  way to prompt you for approval. The failure now prints the exact
+  `overnet-auth.pl policy-grant` command that would authorize it. `auth init`
+  writes the policies the proxy needs, so this should only appear if the server
+  name, network, or identity differs from what you configured.
+
 ## Authenticated IRC
+
+The commands below are the manual and scripting-oriented flows, for bridging
+auth into another client or debugging the handshake. For simply connecting,
+use the proxy as above.
 
 For authoritative IRC networks, start the local auth-agent daemon first:
 

@@ -77,12 +77,18 @@ connect with an IRC client (loopback by default):
 ## Connecting to a relay (hosted channels)
 
 By default the server runs standalone — it listens and serves, but hosts no
-authoritative (NIP-29) channels. To serve hosted channels, add an authority
-relay URL to the unit's `Exec=` line and reload:
+authoritative (NIP-29) channels. To serve hosted channels, add **both** an
+authority relay URL and a group host to the unit's `Exec=` line and reload:
 
 ```
---authority-relay-url ws://overnet-relay:7447
+--authority-relay-url ws://overnet-relay:7447 --group-host groups.example.net
 ```
+
+Both are required. A channel is treated as authoritative only when
+`--group-host` is set (`_is_authoritative_channel` in `Server.pm`), so a server
+given only the relay URL still connects to the relay and still serves every
+channel as an ordinary local one, with no error to say why. The shipped
+`overnet-irc.container` already passes `--group-host`.
 
 Point it at the `overnet-relay` deployment (see `relay-perl/deploy/podman/`).
 
