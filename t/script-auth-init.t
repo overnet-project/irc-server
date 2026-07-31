@@ -200,4 +200,122 @@ subtest 'help explains the command' => sub {
   like $output, qr/--key-file/mx,    'documents the identity';
 };
 
+# The subprocess tests above prove the wiring a user touches, but a separate
+# process is invisible to coverage instrumentation running in this one, so the
+# same paths are also driven in-process here.
+use Overnet::Program::IRC::Script::AuthInit;
+
+sub _run {
+  my (@argv) = @_;
+  my ($out, $err) = (q{}, q{});
+  my $status;
+  {
+    local *STDOUT;
+    local *STDERR;
+    open STDOUT, '>', \$out or die "reopen stdout: $!";
+    open STDERR, '>', \$err or die "reopen stderr: $!";
+    $status = Overnet::Program::IRC::Script::AuthInit->run(@argv);
+  }
+  return ($status, $out, $err);
+}
+
+subtest 'in-process: every outcome the command can reach' => sub {
+  my ($dir, $key, $out) = _fixture();
+
+  my ($help_status, $help_out) = _run('--help');
+  is $help_status, 0, 'help succeeds';
+  like $help_out, qr/--server-name/mx, 'and prints usage';
+
+  my ($bad_opt) = _run('--not-an-option');
+  isnt $bad_opt, 0, 'an unknown option is rejected';
+
+  my ($no_server, undef, $no_server_err) = _run('--config-file', $out, '--key-file', $key, '--network', 'overnet');
+  isnt $no_server, 0, 'a missing server name fails';
+  like $no_server_err, qr/--server-name\ is\ required/mx, 'naming the option';
+
+  my ($no_net, undef, $no_net_err) =
+    _run('--config-file', $out, '--key-file', $key, '--server-name', 'irc.example.net');
+  isnt $no_net, 0, 'a missing network fails';
+  like $no_net_err, qr/--network\ is\ required/mx, 'naming the option';
+
+  my ($no_id, undef, $no_id_err) =
+    _run('--config-file', $out, '--server-name', 'irc.example.net', '--network', 'overnet');
+  isnt $no_id, 0, 'a missing identity fails';
+  like $no_id_err, qr/--key-file/mx, 'pointing at the identity options';
+
+  my ($absent, undef, $absent_err) = _run('--config-file', $out, '--key-file', File::Spec->catfile($dir, 'nope.pem'),
+    '--server-name', 'irc.example.net', '--network', 'overnet',);
+  isnt $absent, 0, 'a key file that is not there fails';
+  like $absent_err, qr/keygen/mx, 'and says how to create one';
+
+  my ($ok, $ok_out) =
+    _run('--config-file', $out, '--key-file', $key, '--server-name', 'irc.example.net', '--network', 'overnet',);
+  is $ok, 0, 'a complete invocation succeeds';
+  like $ok_out, qr/auth-agent\ config\ written/mx, 'reporting where it went';
+  like $ok_out, qr/overnet-auth-agent/mx,          'and what to run next';
+
+  my ($again, undef, $again_err) =
+    _run('--config-file', $out, '--key-file', $key, '--server-name', 'irc.example.net', '--network', 'overnet',);
+  isnt $again, 0, 'a second run refuses';
+  like $again_err, qr/already\ exists/imx, 'naming the conflict';
+
+  # The pass backend takes a different branch and prints no pubkey, since the
+  # secret is not readable from here.
+  my $pass_out = File::Spec->catfile($dir, 'pass.json');
+  my ($pass_status, $pass_stdout) = _run(
+    '--config-file', $pass_out,
+    '--pass-entry',  'overnet-priv-key',
+    '--server-name', 'irc.example.net',
+    '--network',     'overnet',
+    '--auth-sock',   File::Spec->catfile($dir, 'auth.sock'),
+    '--state-file',  File::Spec->catfile($dir, 'state.json'),
+    '--identity-id', 'work',
+  );
+  is $pass_status, 0, 'a pass-backed config succeeds';
+  unlike $pass_stdout, qr/public\ key/mx, 'and advertises no pubkey it cannot read';
+};
+
+subtest 'in-process: the default location is used when none is given' => sub {
+  my $state = tempdir(CLEANUP => 1);
+  local $ENV{XDG_STATE_HOME} = $state;
+
+  my $dir = tempdir(CLEANUP => 1);
+  my $key = File::Spec->catfile($dir, 'id.pem');
+  Overnet::Core::Nostr->generate_key->save_privkey($key);
+
+  my ($status, $out) = _run('--key-file', $key, '--server-name', 'irc.example.net', '--network', 'overnet');
+  is $status, 0, 'a config is written without being told where' or diag($out);
+  ok -f File::Spec->catfile($state, 'overnet', 'auth-agent.json'), 'it lands under the state directory';
+};
+
+subtest 'in-process: a config that cannot be built or written is reported' => sub {
+  my $dir = tempdir(CLEANUP => 1);
+
+  # A file that exists but holds no usable key: reading its pubkey fails while
+  # building the config, before anything is written.
+  my $garbage = File::Spec->catfile($dir, 'garbage.pem');
+  open my $gh, '>', $garbage or die "open: $!";
+  print {$gh} "not a key\n" or die "print: $!";
+  close $gh                 or die "close: $!";
+
+  my $out = File::Spec->catfile($dir, 'from-garbage.json');
+  my ($status, undef, $err) =
+    _run('--config-file', $out, '--key-file', $garbage, '--server-name', 'irc.example.net', '--network', 'overnet');
+  isnt $status, 0, 'an unusable identity fails the build';
+  ok length $err, 'and the reason is reported';
+  ok !-e $out,    'leaving no half-written config behind';
+
+  # A path whose parent cannot be created, because a plain file is in the way.
+  my $key = File::Spec->catfile($dir, 'id.pem');
+  Overnet::Core::Nostr->generate_key->save_privkey($key);
+  my $blocker = File::Spec->catfile($dir, 'blocker');
+  open my $fh, '>', $blocker or die "open: $!";
+  close $fh or die "close: $!";
+
+  my ($write_status, undef, $write_err) = _run('--config-file', File::Spec->catfile($blocker, 'sub', 'agent.json'),
+    '--key-file', $key, '--server-name', 'irc.example.net', '--network', 'overnet',);
+  isnt $write_status, 0, 'a config that cannot be written is an error';
+  ok length $write_err, 'and the reason is reported';
+};
+
 done_testing;
