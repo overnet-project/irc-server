@@ -7,6 +7,7 @@ use English qw(-no_match_vars);
 our $VERSION = '0.001';
 
 my @COMMANDS = (
+  ['connect',         'Overnet::Program::IRC::Script::Connect',     'Run the auth agent and IRC proxy together'],
   ['keygen',          'Overnet::Program::IRC::Script::Keygen',      'Create the Nostr identity you authenticate with'],
   ['auth',            'Overnet::Program::IRC::Script::Auth',        'Run auth-agent IRC helpers'],
   ['proxy',           'Overnet::Program::IRC::Script::Proxy',       'Run the local auth-hiding IRC proxy'],

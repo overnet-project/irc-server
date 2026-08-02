@@ -44,10 +44,19 @@ overnet-irc-server auth init \
   --server-name irc.example.net --network overnet \
   --key-file ~/.local/state/overnet/id.pem
 
-# 3. Run the auth agent (stays in the foreground).
-overnet-auth-agent.pl --config-file ~/.local/state/overnet/auth-agent.json
+# 3. Run the agent and the proxy together (stays in the foreground).
+overnet-irc-server connect \
+  --server-host irc.example.net --server-port 6697 --server-tls
+```
 
-# 4. In another terminal, run the proxy (also stays in the foreground).
+`connect` reads the socket from the config, starts the auth agent unless one is
+already listening there, and runs the proxy against it. Stopping it with Ctrl-C
+stops the agent it started, so your signing key does not stay loaded in a
+process you have forgotten about. To run the two yourself instead:
+
+```bash
+overnet-auth-agent.pl --config-file ~/.local/state/overnet/auth-agent.json
+# then, in another terminal:
 export OVERNET_AUTH_SOCK=~/.local/state/overnet/auth.sock
 overnet-irc-server proxy \
   --server-host irc.example.net --server-port 6697 --server-tls

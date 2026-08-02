@@ -29,6 +29,8 @@ like $content, qr/weechat/imx,                         'README covers more than 
 like $content, qr/policy-grant/mx, 'README explains the failure a mismatched config produces and how to fix it';
 like $content, qr/one\ client\ connection\ at\ a\ time/mx, 'README discloses that the proxy serves a single client';
 
+like $content, qr/overnet-irc-server\ connect/mx,
+  'README documents the single command that runs the agent and proxy together';
 like $content, qr/OVERNET_AUTH_SOCK/mx,                'README documents OVERNET_AUTH_SOCK for auth-agent discovery';
 like $content, qr/--auth-sock/mx,                      'README documents the explicit auth socket override';
 like $content, qr/overnet-irc-server\ auth\ auth/mx,   'README documents the IRC auth helper';
