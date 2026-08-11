@@ -68,6 +68,7 @@ is(
       qw(
         t/00-load.t
         t/bin-syntax.t
+        t/dispatcher.t
         t/irc-auth-cli.t
         t/irc-main-cli.t
         t/irc-auth-helper.t
@@ -77,7 +78,9 @@ is(
         t/irc-proxy.t
         t/makemaker-metadata.t
         t/manifest-skip-policy.t
+        t/message-parser.t
         t/readme-auth.t
+        t/server-state.t
         t/write-failures.t
       )
     ),

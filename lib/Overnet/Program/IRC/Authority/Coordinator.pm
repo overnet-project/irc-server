@@ -1,12 +1,21 @@
 package Overnet::Program::IRC::Authority::Coordinator;
 
 use strictures 2;
+use Moo;
 
 use English qw(-no_match_vars);
 use Overnet::Authority::HostedChannel;
 
 our $VERSION = '0.001';
 my $MAX_RENDERED_SUBSCRIPTION_EVENT_IDS = 4_096;
+
+has server => (
+  is       => 'ro',
+  required => 1,
+  weak_ref => 1,
+);
+
+no Moo;
 
 sub _event_id {
   my ($event) = @_;
@@ -22,7 +31,8 @@ sub _event_id {
 }
 
 sub _merge_authoritative_events {
-  my ($server, @lists) = @_;
+  my ($self, @lists) = @_;
+  my $server = $self->server;
   my @events;
   my %seen_ids;
 
@@ -46,7 +56,8 @@ sub _merge_authoritative_events {
 }
 
 sub _all_authoritative_discovery_events {
-  my ($server) = @_;
+  my ($self) = @_;
+  my $server = $self->server;
   my @events;
 
   for my $events (values %{$server->{authoritative_discovery_event_cache} || {}}) {
@@ -61,7 +72,8 @@ sub _all_authoritative_discovery_events {
 }
 
 sub _set_authoritative_discovery_events {
-  my ($server, $events) = @_;
+  my ($self, $events) = @_;
+  my $server = $self->server;
   my %by_channel;
 
   for my $event (@{$server->_sort_authoritative_events($events || []) || []}) {
@@ -125,17 +137,20 @@ sub _set_authoritative_discovery_events {
 }
 
 sub authoritative_grant_subscription_id {
-  my ($server) = @_;
+  my ($self) = @_;
+  my $server = $self->server;
   return 'irc.authority.grants:' . $server->{config}{network};
 }
 
 sub authoritative_discovery_subscription_id {
-  my ($server) = @_;
+  my ($self) = @_;
+  my $server = $self->server;
   return 'irc.authority.discovery:' . $server->{config}{network};
 }
 
 sub authoritative_channel_subscription_ids {
-  my ($server,     $channel)  = @_;
+  my ($self, $channel) = @_;
+  my $server = $self->server;
   my ($group_host, $group_id) = $server->_authoritative_group_binding($channel);
   if (!(defined $group_host && defined $group_id)) {
     return ();
@@ -148,13 +163,14 @@ sub authoritative_channel_subscription_ids {
 }
 
 sub ensure_authoritative_grant_subscription {
-  my ($server) = @_;
+  my ($self) = @_;
+  my $server = $self->server;
   if (!($server->_authority_relay_enabled)) {
     return;
   }
 
   my $subscription_id = $server->{authoritative_grant_subscription_id}
-    || authoritative_grant_subscription_id($server);
+    || $self->authoritative_grant_subscription_id;
   return $subscription_id
     if $server->{authoritative_grant_subscription_id};
 
@@ -184,7 +200,8 @@ sub ensure_authoritative_grant_subscription {
 }
 
 sub ensure_authoritative_discovery_subscription {
-  my ($server) = @_;
+  my ($self) = @_;
+  my $server = $self->server;
   if (!($server->_authority_relay_enabled)) {
     return;
   }
@@ -194,7 +211,7 @@ sub ensure_authoritative_discovery_subscription {
   }
 
   my $subscription_id = $server->{authoritative_discovery_subscription_id}
-    || authoritative_discovery_subscription_id($server);
+    || $self->authoritative_discovery_subscription_id;
   return $subscription_id
     if $server->{authoritative_discovery_subscription_id};
 
@@ -224,7 +241,8 @@ sub ensure_authoritative_discovery_subscription {
 }
 
 sub ensure_authoritative_channel_subscription {
-  my ($server, $channel) = @_;
+  my ($self, $channel) = @_;
+  my $server = $self->server;
   if (!($server->_authority_relay_enabled)) {
     return;
   }
@@ -245,7 +263,7 @@ sub ensure_authoritative_channel_subscription {
 
   my @subscription_specs = (
     [
-      (authoritative_channel_subscription_ids($server, $canonical))[0],
+      ($self->authoritative_channel_subscription_ids($canonical))[0],
       [
         {
           kinds => [39_000, 39_001, 39_002, 39_003],
@@ -255,7 +273,7 @@ sub ensure_authoritative_channel_subscription {
       ],
     ],
     [
-      (authoritative_channel_subscription_ids($server, $canonical))[1],
+      ($self->authoritative_channel_subscription_ids($canonical))[1],
       [
         {
           kinds => [9000, 9001, 9_002, 9009, 9021, 9022],
@@ -299,7 +317,8 @@ sub ensure_authoritative_channel_subscription {
 }
 
 sub read_nostr_subscription_snapshot {
-  my ($server, $subscription_id, %args) = @_;
+  my ($self, $subscription_id, %args) = @_;
+  my $server = $self->server;
   if (!(defined $subscription_id && !ref($subscription_id) && length($subscription_id))) {
     return [];
   }
@@ -326,7 +345,8 @@ sub read_nostr_subscription_snapshot {
 }
 
 sub remember_authoritative_discovered_channel {
-  my ($server, %args) = @_;
+  my ($self, %args) = @_;
+  my $server   = $self->server;
   my $channel  = $args{channel};
   my $group_id = $args{group_id};
   if (!($server->_is_channel_name($channel))) {
@@ -351,7 +371,8 @@ sub remember_authoritative_discovered_channel {
 }
 
 sub forget_authoritative_discovered_channel {
-  my ($server, $channel) = @_;
+  my ($self, $channel) = @_;
+  my $server    = $self->server;
   my $canonical = $server->_canonical_channel_name($channel);
   if (!(defined $canonical)) {
     return 0;
@@ -362,7 +383,8 @@ sub forget_authoritative_discovered_channel {
 }
 
 sub record_authoritative_discovery_event {
-  my ($server, $event) = @_;
+  my ($self, $event) = @_;
+  my $server = $self->server;
   if (!(ref($event) eq 'HASH')) {
     return 0;
   }
@@ -375,13 +397,14 @@ sub record_authoritative_discovery_event {
     return 0;
   }
 
-  my $merged = _merge_authoritative_events($server, _all_authoritative_discovery_events($server), [$event],);
-  _set_authoritative_discovery_events($server, $merged);
+  my $merged = $self->_merge_authoritative_events($self->_all_authoritative_discovery_events, [$event],);
+  $self->_set_authoritative_discovery_events($merged);
   return 1;
 }
 
 sub refresh_authoritative_discovery_cache {
-  my ($server, %args) = @_;
+  my ($self, %args) = @_;
+  my $server = $self->server;
   if (!($server->_authority_relay_enabled)) {
     return 0;
   }
@@ -390,18 +413,19 @@ sub refresh_authoritative_discovery_cache {
     return 0;
   }
 
-  my $subscription_id = ensure_authoritative_discovery_subscription($server);
+  my $subscription_id = $self->ensure_authoritative_discovery_subscription;
   if (!(defined $subscription_id)) {
     return 0;
   }
 
-  my $events = read_nostr_subscription_snapshot($server, $subscription_id, ($args{refresh} ? (refresh => 1) : ()),);
-  my $merged = _merge_authoritative_events($server, _all_authoritative_discovery_events($server), $events,);
-  return _set_authoritative_discovery_events($server, $merged);
+  my $events = $self->read_nostr_subscription_snapshot($subscription_id, ($args{refresh} ? (refresh => 1) : ()),);
+  my $merged = $self->_merge_authoritative_events($self->_all_authoritative_discovery_events, $events,);
+  return $self->_set_authoritative_discovery_events($merged);
 }
 
 sub query_nostr_events {
-  my ($server, %args) = @_;
+  my ($self, %args) = @_;
+  my $server    = $self->server;
   my $relay_url = $args{relay_url};
   my $filters   = $args{filters};
   if (!(defined $relay_url && !ref($relay_url) && length($relay_url))) {
@@ -435,7 +459,8 @@ sub query_nostr_events {
 }
 
 sub read_authoritative_nip29_events_from_runtime {
-  my ($server, $channel) = @_;
+  my ($self, $channel) = @_;
+  my $server = $self->server;
   my $stream = $server->_authoritative_nip29_stream_name($channel);
   if (!(defined $stream)) {
     return [];
@@ -454,7 +479,8 @@ sub read_authoritative_nip29_events_from_runtime {
 }
 
 sub load_authoritative_nip29_events {
-  my ($server, $channel, %args) = @_;
+  my ($self, $channel, %args) = @_;
+  my $server = $self->server;
   if (!($server->_is_authoritative_channel($channel))) {
     return [];
   }
@@ -490,7 +516,7 @@ sub load_authoritative_nip29_events {
         ],
       ) {
         my $queried = query_nostr_events(
-          $server,
+          $self,
           relay_url  => $server->_authority_relay_url,
           filters    => $filters,
           timeout_ms => $server->_authority_relay_query_timeout_ms,
@@ -509,7 +535,7 @@ sub load_authoritative_nip29_events {
       return \@events;
     }
 
-    my $subscription_ids = ensure_authoritative_channel_subscription($server, $canonical);
+    my $subscription_ids = $self->ensure_authoritative_channel_subscription($canonical);
     if (!(ref($subscription_ids) eq 'ARRAY' && @{$subscription_ids})) {
       return [];
     }
@@ -517,7 +543,7 @@ sub load_authoritative_nip29_events {
     my @events;
     my %seen_ids;
     for my $subscription_id (@{$subscription_ids}) {
-      my $subscription_events = read_nostr_subscription_snapshot($server, $subscription_id);
+      my $subscription_events = $self->read_nostr_subscription_snapshot($subscription_id);
       for my $event (@{$subscription_events || []}) {
         if (!(ref($event) eq 'HASH')) {
           next;
@@ -530,11 +556,12 @@ sub load_authoritative_nip29_events {
     return \@events;
   }
 
-  return read_authoritative_nip29_events_from_runtime($server, $canonical);
+  return $self->read_authoritative_nip29_events_from_runtime($canonical);
 }
 
 sub refresh_authoritative_nip29_channel_cache {
-  my ($server, $channel, %args) = @_;
+  my ($self, $channel, %args) = @_;
+  my $server = $self->server;
   if (!($server->_is_authoritative_channel($channel))) {
     return [];
   }
@@ -550,8 +577,8 @@ sub refresh_authoritative_nip29_channel_cache {
     ? $cache->{events}
     : [];
   my $events =
-    load_authoritative_nip29_events($server, $canonical, (defined $args{refresh} ? (refresh => $args{refresh}) : ()),);
-  $events = _merge_authoritative_events($server, $old_events, $events);
+    $self->load_authoritative_nip29_events($canonical, (defined $args{refresh} ? (refresh => $args{refresh}) : ()),);
+  $events = $self->_merge_authoritative_events($old_events, $events);
   my $view = $server->_derive_authoritative_channel_view_from_events($canonical, $events);
   $cache->{events}       = $events;
   $cache->{view}         = $view;
@@ -563,7 +590,8 @@ sub refresh_authoritative_nip29_channel_cache {
 }
 
 sub read_authoritative_nip29_events {
-  my ($server, $channel, %args) = @_;
+  my ($self, $channel, %args) = @_;
+  my $server = $self->server;
   if (!($server->_is_authoritative_channel($channel))) {
     return [];
   }
@@ -585,11 +613,11 @@ sub read_authoritative_nip29_events {
     ref($cache) eq 'HASH' && ref($cache->{events}) eq 'ARRAY'
     ? [@{$cache->{events}}]
     : [];
-  my $events    = refresh_authoritative_nip29_channel_cache($server, $canonical, refresh => $args{force} ? 1 : 0,);
+  my $events    = $self->refresh_authoritative_nip29_channel_cache($canonical, refresh => $args{force} ? 1 : 0,);
   my $new_cache = $server->{authoritative_channel_cache}{$canonical};
   if ($args{force} && ref($new_cache) eq 'HASH') {
     reconcile_authoritative_pending_invites_from_refresh(
-      $server,
+      $self,
       channel    => $canonical,
       old_view   => $old_view,
       old_events => $old_events,
@@ -601,7 +629,8 @@ sub read_authoritative_nip29_events {
 }
 
 sub read_authoritative_grant_events {
-  my ($server, %args) = @_;
+  my ($self, %args) = @_;
+  my $server = $self->server;
   if (!($server->_authority_relay_enabled)) {
     return [];
   }
@@ -611,8 +640,8 @@ sub read_authoritative_grant_events {
     return [@{$cache->{events}}];
   }
 
-  my $subscription_id = ensure_authoritative_grant_subscription($server);
-  my $events = read_nostr_subscription_snapshot($server, $subscription_id, ($args{force} ? (refresh => 1) : ()),);
+  my $subscription_id = $self->ensure_authoritative_grant_subscription;
+  my $events = $self->read_nostr_subscription_snapshot($subscription_id, ($args{force} ? (refresh => 1) : ()),);
   $events = $server->_sort_authoritative_events($events);
 
   $server->{authoritative_grant_cache} = {
@@ -625,7 +654,8 @@ sub read_authoritative_grant_events {
 }
 
 sub publish_authoritative_nip29_event {
-  my ($server, %args) = @_;
+  my ($self, %args) = @_;
+  my $server  = $self->server;
   my $channel = $args{channel};
   my $client  = $args{client};
   my $event   = $args{event};
@@ -691,16 +721,17 @@ sub publish_authoritative_nip29_event {
     return 1;
   }
 
-  if (!(append_authoritative_nip29_event($server, $channel, $event))) {
+  if (!($self->append_authoritative_nip29_event($channel, $event))) {
     return 0;
   }
 
-  refresh_authoritative_nip29_channel_cache($server, $channel);
+  $self->refresh_authoritative_nip29_channel_cache($channel);
   return 1;
 }
 
 sub append_authoritative_nip29_event {
-  my ($server, $channel, $event) = @_;
+  my ($self, $channel, $event) = @_;
+  my $server = $self->server;
   if (!(ref($event) eq 'HASH')) {
     return 0;
   }
@@ -721,13 +752,14 @@ sub append_authoritative_nip29_event {
 }
 
 sub handle_subscription_event {
-  my ($server, $params) = @_;
+  my ($self, $params) = @_;
+  my $server = $self->server;
   if (!(ref($params) eq 'HASH')) {
     return 0;
   }
 
   if (($params->{item_type} || q{}) eq 'nostr.event') {
-    return handle_nostr_subscription_event($server, $params);
+    return $self->handle_nostr_subscription_event($params);
   }
   if (
     !(
@@ -761,7 +793,7 @@ sub handle_subscription_event {
     return 0;
   }
 
-  _remember_rendered_subscription_event_id($server, $data->{id});
+  $self->_remember_rendered_subscription_event_id($data->{id});
 
   my $originating_client_id =
     defined $data->{id}
@@ -780,7 +812,8 @@ sub handle_subscription_event {
 }
 
 sub handle_nostr_subscription_event {
-  my ($server, $params) = @_;
+  my ($self, $params) = @_;
+  my $server = $self->server;
   if (!(ref($params->{data}) eq 'HASH')) {
     return 0;
   }
@@ -800,12 +833,12 @@ sub handle_nostr_subscription_event {
   }
 
   if (($subscription_id || q{}) eq ($server->{authoritative_grant_subscription_id} || q{})) {
-    read_authoritative_grant_events($server, force => 1);
+    $self->read_authoritative_grant_events(force => 1,);
     return 1;
   }
 
   if (($subscription_id || q{}) eq ($server->{authoritative_discovery_subscription_id} || q{})) {
-    return record_authoritative_discovery_event($server, $params->{data});
+    return $self->record_authoritative_discovery_event($params->{data});
   }
 
   my $channel = $server->{authoritative_subscription_channels}{$subscription_id};
@@ -818,14 +851,15 @@ sub handle_nostr_subscription_event {
     event   => $params->{data},
   );
   if ($updated) {
-    _remember_rendered_subscription_event_id($server, $params->{data}{id});
+    $self->_remember_rendered_subscription_event_id($params->{data}{id});
   }
 
   return $updated;
 }
 
 sub _remember_rendered_subscription_event_id {
-  my ($server, $event_id) = @_;
+  my ($self, $event_id) = @_;
+  my $server = $self->server;
   if (!(defined $event_id && !ref($event_id) && length($event_id))) {
     return 0;
   }
@@ -849,7 +883,8 @@ sub _remember_rendered_subscription_event_id {
 }
 
 sub reconcile_authoritative_pending_invites_from_refresh {
-  my ($server, %args) = @_;
+  my ($self, %args) = @_;
+  my $server     = $self->server;
   my $channel    = $args{channel};
   my $old_view   = $args{old_view};
   my $old_events = $args{old_events};
@@ -914,9 +949,20 @@ Version 0.001.
 
 =head1 SYNOPSIS
 
-  Overnet::Program::IRC::Authority::Coordinator::refresh_authoritative_discovery_cache($server);
+  my $coordinator = Overnet::Program::IRC::Authority::Coordinator->new(
+    server => $server,
+  );
+  $coordinator->refresh_authoritative_discovery_cache;
 
 =head1 SUBROUTINES/METHODS
+
+=head2 new
+
+Creates a coordinator with a weak reference to its server.
+
+=head2 server
+
+Returns the server dependency.
 
 =head2 authoritative_grant_subscription_id
 

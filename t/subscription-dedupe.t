@@ -7,6 +7,11 @@ use Test2::V0;
 use Overnet::Program::IRC::Authority::Coordinator;
 use TestSubscriptionServer;
 
+sub _coordinator {
+  my ($server) = @_;
+  return Overnet::Program::IRC::Authority::Coordinator->new(server => $server,);
+}
+
 my $server = TestSubscriptionServer->new(
   suppress_subscription_event_ids => {},
   rendered_subscription_event_ids => {},
@@ -19,8 +24,7 @@ my $event = {
 };
 
 is(
-  Overnet::Program::IRC::Authority::Coordinator::handle_subscription_event(
-    $server,
+  _coordinator($server)->handle_subscription_event(
     {
       item_type => 'event',
       data      => $event,
@@ -31,8 +35,7 @@ is(
 );
 
 is(
-  Overnet::Program::IRC::Authority::Coordinator::handle_subscription_event(
-    $server,
+  _coordinator($server)->handle_subscription_event(
     {
       item_type => 'event',
       data      => $event,
@@ -54,8 +57,7 @@ my $origin_server = TestSubscriptionServer->new(
 );
 
 is(
-  Overnet::Program::IRC::Authority::Coordinator::handle_subscription_event(
-    $origin_server,
+  _coordinator($origin_server)->handle_subscription_event(
     {
       item_type => 'event',
       data      => {

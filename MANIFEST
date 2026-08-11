@@ -20,6 +20,8 @@ lib/Overnet/Program/IRC/Auth/Helper.pm
 lib/Overnet/Program/IRC/Authority/Coordinator.pm
 lib/Overnet/Program/IRC/Command/Auth.pm
 lib/Overnet/Program/IRC/Command/Channel.pm
+lib/Overnet/Program/IRC/Dispatcher.pm
+lib/Overnet/Program/IRC/MessageParser.pm
 lib/Overnet/Program/IRC/Proxy.pm
 lib/Overnet/Program/IRC/Renderer.pm
 lib/Overnet/Program/IRC/Script/Auth.pm
@@ -30,6 +32,7 @@ lib/Overnet/Program/IRC/Script/LocalServer.pm
 lib/Overnet/Program/IRC/Script/Main.pm
 lib/Overnet/Program/IRC/Script/Proxy.pm
 lib/Overnet/Program/IRC/Server.pm
+lib/Overnet/Program/IRC/State.pm
 lib/Overnet/Program/IRC/Script/Server.pm
 lib/Overnet/Program/IRC/Script/Service.pm
 lib/Overnet/Program/IRC/Script/Util.pm
@@ -44,6 +47,7 @@ t/bin-syntax.t
 t/command-auth.t
 t/command-channel.t
 t/deploy-podman-packaging.t
+t/dispatcher.t
 t/host-cloak.t
 t/irc-auth-cli.t
 t/irc-auth-daemon-e2e.t
@@ -55,6 +59,7 @@ t/irc-proxy-smoke.t
 t/irc-proxy.t
 t/makemaker-metadata.t
 t/manifest-skip-policy.t
+t/message-parser.t
 t/readme-auth.t
 t/renderer.t
 t/script-auth.t
@@ -72,4 +77,5 @@ t/server-commands.t
 t/server-edges.t
 t/server-emit.t
 t/server-run.t
+t/server-state.t
 t/write-failures.t

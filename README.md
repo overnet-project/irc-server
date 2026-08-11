@@ -174,6 +174,16 @@ that behavior explicit.
 - The local demo client is intentionally small. It is a convenience terminal client for exercising the Overnet IRC server, not a full IRC client.
 - `overnet-irc-server auth` uses the local auth agent. It does not read raw private keys directly.
 
+## Internal Design
+
+`Overnet::Program::IRC::Server` is the composition root and owns transport,
+runtime requests, and protocol orchestration. `MessageParser` owns IRC wire
+parsing, `Dispatcher` owns registration-phase and command routing, `State` owns
+RFC 1459 nick/channel indexes, and `Authority::Coordinator` owns authority relay
+subscriptions, cache loading, publishing, and subscription-event coordination.
+Authentication and channel command behavior remain separated under `Command`;
+wire response construction remains in `Renderer`.
+
 ## Related Repositories
 
 - [spec](https://github.com/overnet-project/spec)

@@ -7,10 +7,13 @@ for my $module (
   Overnet::Program::IRC::Authority::Coordinator
   Overnet::Program::IRC::Command::Auth
   Overnet::Program::IRC::Command::Channel
+  Overnet::Program::IRC::Dispatcher
+  Overnet::Program::IRC::MessageParser
   Overnet::Program::IRC::Proxy
   Overnet::Program::IRC::Renderer
   Overnet::Program::IRC::Script::Main
   Overnet::Program::IRC::Server
+  Overnet::Program::IRC::State
   )
 ) {
   my $path = $module =~ s{::}{/}gr . '.pm';

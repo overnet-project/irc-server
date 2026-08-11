@@ -15,9 +15,10 @@ use MIME::Base64    qw(decode_base64 encode_base64);
 use Overnet::Authority::HostedChannel;
 use Overnet::Core::Nostr;
 use Overnet::Program::IRC::Authority::Coordinator;
-use Overnet::Program::IRC::Command::Auth;
-use Overnet::Program::IRC::Command::Channel;
+use Overnet::Program::IRC::Dispatcher;
+use Overnet::Program::IRC::MessageParser;
 use Overnet::Program::IRC::Renderer;
+use Overnet::Program::IRC::State;
 use Time::HiRes qw(time);
 use Overnet::Program::Protocol;
 use Overnet::Program::TLSConfig;
@@ -64,23 +65,109 @@ has next_client_id => (
   writer  => '_set_next_client_id',
   default => sub {1},
 );
+has _state => (
+  is      => 'ro',
+  lazy    => 1,
+  default => sub { Overnet::Program::IRC::State->new },
+  handles => {
+    _irc_casefold                   => 'irc_casefold',
+    _nick_key                       => 'nick_key',
+    _channel_key                    => 'channel_key',
+    _is_channel_name                => 'is_channel_name',
+    _is_nick_name                   => 'is_nick_name',
+    _canonical_current_nick         => 'canonical_current_nick',
+    _client_for_current_nick        => 'client_for_current_nick',
+    _nick_in_use                    => 'nick_in_use',
+    _assign_client_nick             => 'assign_client_nick',
+    _release_client_nick            => 'release_client_nick',
+    _canonical_channel_name         => 'canonical_channel_name',
+    _client_joined_channel_name     => 'client_joined_channel_name',
+    _channel_state                  => 'channel_state',
+    _add_visible_nick               => 'add_visible_nick',
+    _remove_visible_nick            => 'remove_visible_nick',
+    _rename_visible_nick            => 'rename_visible_nick',
+    _rename_visible_nick_everywhere => 'rename_visible_nick_everywhere',
+    _rename_client_channels         => 'rename_client_channels',
+    _visible_nicks_for_channel      => 'visible_nicks_for_channel',
+  },
+);
+has _message_parser => (
+  is      => 'ro',
+  lazy    => 1,
+  default => sub { Overnet::Program::IRC::MessageParser->new },
+  handles => {
+    _parse_irc_message => 'parse',
+    _parse_irc_tags    => 'parse_tags',
+  },
+);
+has _dispatcher => (
+  is      => 'ro',
+  lazy    => 1,
+  default => sub {
+    my ($self) = @_;
+    return Overnet::Program::IRC::Dispatcher->new(
+      server => $self,
+      parser => $self->_message_parser,
+    );
+  },
+  handles => {
+    _handle_client_line => 'dispatch_line',
+  },
+);
+has _authority_coordinator => (
+  is      => 'ro',
+  lazy    => 1,
+  default => sub {
+    my ($self) = @_;
+    return Overnet::Program::IRC::Authority::Coordinator->new(server => $self,);
+  },
+  handles => {
+    _authoritative_grant_subscription_id          => 'authoritative_grant_subscription_id',
+    _authoritative_discovery_subscription_id      => 'authoritative_discovery_subscription_id',
+    _authoritative_channel_subscription_ids       => 'authoritative_channel_subscription_ids',
+    _ensure_authoritative_grant_subscription      => 'ensure_authoritative_grant_subscription',
+    _ensure_authoritative_discovery_subscription  => 'ensure_authoritative_discovery_subscription',
+    _ensure_authoritative_channel_subscription    => 'ensure_authoritative_channel_subscription',
+    _read_nostr_subscription_snapshot             => 'read_nostr_subscription_snapshot',
+    _remember_authoritative_discovered_channel    => 'remember_authoritative_discovered_channel',
+    _forget_authoritative_discovered_channel      => 'forget_authoritative_discovered_channel',
+    _record_authoritative_discovery_event         => 'record_authoritative_discovery_event',
+    _refresh_authoritative_discovery_cache        => 'refresh_authoritative_discovery_cache',
+    _query_nostr_events                           => 'query_nostr_events',
+    _read_authoritative_nip29_events_from_runtime => 'read_authoritative_nip29_events_from_runtime',
+    _load_authoritative_nip29_events              => 'load_authoritative_nip29_events',
+    _refresh_authoritative_nip29_channel_cache    => 'refresh_authoritative_nip29_channel_cache',
+    _read_authoritative_nip29_events              => 'read_authoritative_nip29_events',
+    _read_authoritative_grant_events              => 'read_authoritative_grant_events',
+    _publish_authoritative_nip29_event            => 'publish_authoritative_nip29_event',
+    _append_authoritative_nip29_event             => 'append_authoritative_nip29_event',
+    _handle_subscription_event                    => 'handle_subscription_event',
+    _handle_nostr_subscription_event              => 'handle_nostr_subscription_event',
+  },
+);
 has clients => (
-  is      => 'rw',
+  is      => 'ro',
   reader  => '_clients',
-  writer  => '_set_clients',
-  default => sub { {} },
+  default => sub {
+    my ($self) = @_;
+    return $self->_state->clients;
+  },
 );
 has channels => (
-  is      => 'rw',
+  is      => 'ro',
   reader  => '_channels',
-  writer  => '_set_channels',
-  default => sub { {} },
+  default => sub {
+    my ($self) = @_;
+    return $self->_state->channels;
+  },
 );
 has nick_to_client_id => (
-  is      => 'rw',
+  is      => 'ro',
   reader  => '_nick_to_client_id',
-  writer  => '_set_nick_to_client_id',
-  default => sub { {} },
+  default => sub {
+    my ($self) = @_;
+    return $self->_state->nick_to_client_id;
+  },
 );
 has suppress_subscription_event_ids => (
   is      => 'rw',
@@ -853,67 +940,6 @@ sub _looks_like_tls_client_hello {
   return 1;
 }
 
-sub _handle_client_line {
-  my ($self, $client_id, $line) = @_;
-  my $client = $self->{clients}{$client_id}
-    or return 1;
-  my $message = $self->_parse_irc_message($line);
-  if (!($message)) {
-    return 1;
-  }
-
-  my $command = $message->{command};
-  my @params  = @{$message->{params} || []};
-
-  my $connection_result = $self->_handle_connection_command($client_id, $client, $command, \@params);
-  if (defined $connection_result) {
-    return $connection_result;
-  }
-
-  if (!$client->{registered}) {
-    return $self->_handle_unregistered_command($client_id, $command);
-  }
-
-  return $self->_handle_registered_command($client_id, $client, $command, \@params);
-}
-
-my %CONNECTION_COMMAND_HANDLERS = (
-  CAP => sub {
-    my ($self, $client_id, $client, $command, $params) = @_;
-    return Overnet::Program::IRC::Command::Auth::handle_cap($self, $client_id, $params,);
-  },
-  NICK => sub {
-    my ($self, $client_id, $client, $command, $params) = @_;
-    return $self->_handle_nick_command($client_id, $client, $params);
-  },
-  USER => sub {
-    my ($self, $client_id, $client, $command, $params) = @_;
-    return $self->_handle_user_command($client_id, $client, $params);
-  },
-  PING => sub {
-    my ($self, $client_id, $client, $command, $params) = @_;
-    return $self->_handle_ping_command($client_id, $params);
-  },
-  AUTHENTICATE => sub {
-    my ($self, $client_id, $client, $command, $params) = @_;
-    return Overnet::Program::IRC::Command::Auth::handle_authenticate($self, $client_id, $params,);
-  },
-  QUIT => sub {
-    my ($self, $client_id, $client, $command, $params) = @_;
-    return $self->_handle_quit_command($client_id, $params);
-  },
-);
-
-sub _handle_connection_command {
-  my ($self, $client_id, $client, $command, $params) = @_;
-
-  my $handler = $CONNECTION_COMMAND_HANDLERS{$command};
-  if (!(defined $handler)) {
-    return;
-  }
-  return $handler->($self, $client_id, $client, $command, $params);
-}
-
 sub _handle_nick_command {
   my ($self, $client_id, $client, $params) = @_;
   if (!@{$params} || !defined $params->[0] || !length $params->[0]) {
@@ -1034,101 +1060,6 @@ sub _handle_quit_command {
     emit_quit => 1,
     reason    => $reason,
   );
-  return 1;
-}
-
-sub _handle_unregistered_command {
-  my ($self, $client_id, $command) = @_;
-  if ($self->_command_requires_registration($command)) {
-    $self->_send_not_registered($client_id);
-    return 1;
-  }
-
-  $self->_send_unknown_command($client_id, $command);
-  return 1;
-}
-
-my %REGISTERED_COMMAND_HANDLERS = (
-  OVERNETKEY => sub {
-    my ($self, $client_id, $client, $command, $params) = @_;
-    return $self->_handle_overnetkey_command($client_id, $client, $params);
-  },
-  OVERNETAUTH => sub {
-    my ($self, $client_id, $client, $command, $params) = @_;
-    return Overnet::Program::IRC::Command::Auth::handle_overnetauth($self, $client_id, $params,);
-  },
-  OVERNETCHANNEL => sub {
-    my ($self, $client_id, $client, $command, $params) = @_;
-    return Overnet::Program::IRC::Command::Channel::handle_overnetchannel($self, $client_id, $params,);
-  },
-  USERHOST => sub {
-    my ($self, $client_id, $client, $command, $params) = @_;
-    return $self->_handle_userhost_command($client_id, $params);
-  },
-  WHO => sub {
-    my ($self, $client_id, $client, $command, $params) = @_;
-    return $self->_handle_who_command($client_id, $client, $params);
-  },
-  WHOIS => sub {
-    my ($self, $client_id, $client, $command, $params) = @_;
-    return $self->_handle_whois_command($client_id, $params);
-  },
-  MODE => sub {
-    my ($self, $client_id, $client, $command, $params) = @_;
-    return Overnet::Program::IRC::Command::Channel::handle_mode($self, $client_id, $params,);
-  },
-  KICK => sub {
-    my ($self, $client_id, $client, $command, $params) = @_;
-    return Overnet::Program::IRC::Command::Channel::handle_kick($self, $client_id, $params,);
-  },
-  INVITE => sub {
-    my ($self, $client_id, $client, $command, $params) = @_;
-    return Overnet::Program::IRC::Command::Channel::handle_invite($self, $client_id, $params,);
-  },
-  JOIN => sub {
-    my ($self, $client_id, $client, $command, $params) = @_;
-    return Overnet::Program::IRC::Command::Channel::handle_join($self, $client_id, $params,);
-  },
-  NAMES => sub {
-    my ($self, $client_id, $client, $command, $params) = @_;
-    return $self->_handle_names_command($client_id, $params);
-  },
-  PART => sub {
-    my ($self, $client_id, $client, $command, $params) = @_;
-    return Overnet::Program::IRC::Command::Channel::handle_part($self, $client_id, $params,);
-  },
-  PRIVMSG => sub {
-    my ($self, $client_id, $client, $command, $params) = @_;
-    return Overnet::Program::IRC::Command::Channel::handle_privmsg_or_notice($self, $client_id, $command, $params,);
-  },
-  NOTICE => sub {
-    my ($self, $client_id, $client, $command, $params) = @_;
-    return Overnet::Program::IRC::Command::Channel::handle_privmsg_or_notice($self, $client_id, $command, $params,);
-  },
-  TOPIC => sub {
-    my ($self, $client_id, $client, $command, $params) = @_;
-    return Overnet::Program::IRC::Command::Channel::handle_topic($self, $client_id, $params,);
-  },
-  LUSERS => sub {
-    my ($self, $client_id, $client, $command, $params) = @_;
-    $self->_send_lusers_reply($client_id);
-    return 1;
-  },
-  LIST => sub {
-    my ($self, $client_id, $client, $command, $params) = @_;
-    return Overnet::Program::IRC::Command::Channel::handle_list($self, $client_id, $params,);
-  },
-);
-
-sub _handle_registered_command {
-  my ($self, $client_id, $client, $command, $params) = @_;
-
-  my $handler = $REGISTERED_COMMAND_HANDLERS{$command};
-  if (defined $handler) {
-    return $handler->($self, $client_id, $client, $command, $params);
-  }
-
-  $self->_send_unknown_command($client_id, $command);
   return 1;
 }
 
@@ -1962,26 +1893,6 @@ sub _client_numeric_target {
   return $client->{nick};
 }
 
-sub _irc_casefold {
-  my ($self, $value) = @_;
-  if (!(defined $value && !ref($value))) {
-    return;
-  }
-
-  my $folded = $value;
-  $folded =~ tr/A-Z[]\\^/a-z{}|~/s;
-  return $folded;
-}
-
-sub _nick_key {
-  my ($self, $nick) = @_;
-  if (!(defined $nick && !ref($nick) && length($nick))) {
-    return;
-  }
-
-  return $self->_irc_casefold($nick);
-}
-
 sub _default_presentational_host {
   my ($self) = @_;
   return 'overnet.invalid';
@@ -2065,36 +1976,6 @@ sub _cloak_secret {
     $self->{_cloak_secret} = sha256_hex(join q{:}, 'overnet-irc-cloak', $PROCESS_ID, time(), rand());
   }
   return $self->{_cloak_secret};
-}
-
-sub _canonical_current_nick {
-  my ($self, $nick) = @_;
-  my $key = $self->_nick_key($nick);
-  if (!(defined $key)) {
-    return;
-  }
-
-  my $client_id = $self->{nick_to_client_id}{$key};
-  if (!(defined $client_id && exists $self->{clients}{$client_id})) {
-    return;
-  }
-
-  return $self->{clients}{$client_id}{nick};
-}
-
-sub _client_for_current_nick {
-  my ($self, $nick) = @_;
-  my $key = $self->_nick_key($nick);
-  if (!(defined $key)) {
-    return;
-  }
-
-  my $client_id = $self->{nick_to_client_id}{$key};
-  if (!(defined $client_id && exists $self->{clients}{$client_id})) {
-    return;
-  }
-
-  return $self->{clients}{$client_id};
 }
 
 sub _client_has_capability {
@@ -2293,88 +2174,6 @@ sub _authoritative_channels {
   }
   my @channel_names = sort values %channels;
   return @channel_names;
-}
-
-sub _authoritative_grant_subscription_id {
-  my ($self) = @_;
-  return Overnet::Program::IRC::Authority::Coordinator::authoritative_grant_subscription_id($self);
-}
-
-sub _authoritative_discovery_subscription_id {
-  my ($self) = @_;
-  return Overnet::Program::IRC::Authority::Coordinator::authoritative_discovery_subscription_id($self);
-}
-
-sub _authoritative_channel_subscription_ids {
-  my ($self, $channel) = @_;
-  return Overnet::Program::IRC::Authority::Coordinator::authoritative_channel_subscription_ids($self, $channel);
-}
-
-sub _ensure_authoritative_grant_subscription {
-  my ($self) = @_;
-  return Overnet::Program::IRC::Authority::Coordinator::ensure_authoritative_grant_subscription($self);
-}
-
-sub _ensure_authoritative_discovery_subscription {
-  my ($self) = @_;
-  return Overnet::Program::IRC::Authority::Coordinator::ensure_authoritative_discovery_subscription($self);
-}
-
-sub _ensure_authoritative_channel_subscription {
-  my ($self, $channel) = @_;
-  return Overnet::Program::IRC::Authority::Coordinator::ensure_authoritative_channel_subscription($self, $channel);
-}
-
-sub _read_nostr_subscription_snapshot {
-  my ($self, $subscription_id, %args) = @_;
-  return Overnet::Program::IRC::Authority::Coordinator::read_nostr_subscription_snapshot($self, $subscription_id,
-    %args);
-}
-
-sub _remember_authoritative_discovered_channel {
-  my ($self, %args) = @_;
-  return Overnet::Program::IRC::Authority::Coordinator::remember_authoritative_discovered_channel($self, %args);
-}
-
-sub _forget_authoritative_discovered_channel {
-  my ($self, $channel) = @_;
-  return Overnet::Program::IRC::Authority::Coordinator::forget_authoritative_discovered_channel($self, $channel);
-}
-
-sub _record_authoritative_discovery_event {
-  my ($self, $event) = @_;
-  return Overnet::Program::IRC::Authority::Coordinator::record_authoritative_discovery_event($self, $event);
-}
-
-sub _refresh_authoritative_discovery_cache {
-  my ($self, %args) = @_;
-  return Overnet::Program::IRC::Authority::Coordinator::refresh_authoritative_discovery_cache($self, %args);
-}
-
-sub _query_nostr_events {
-  my ($self, %args) = @_;
-  return Overnet::Program::IRC::Authority::Coordinator::query_nostr_events($self, %args);
-}
-
-sub _read_authoritative_nip29_events_from_runtime {
-  my ($self, $channel) = @_;
-  return Overnet::Program::IRC::Authority::Coordinator::read_authoritative_nip29_events_from_runtime($self, $channel);
-}
-
-sub _load_authoritative_nip29_events {
-  my ($self, $channel, %args) = @_;
-  return Overnet::Program::IRC::Authority::Coordinator::load_authoritative_nip29_events($self, $channel, %args);
-}
-
-sub _refresh_authoritative_nip29_channel_cache {
-  my ($self, $channel, %args) = @_;
-  return Overnet::Program::IRC::Authority::Coordinator::refresh_authoritative_nip29_channel_cache($self, $channel,
-    %args);
-}
-
-sub _read_authoritative_nip29_events {
-  my ($self, $channel, %args) = @_;
-  return Overnet::Program::IRC::Authority::Coordinator::read_authoritative_nip29_events($self, $channel, %args);
 }
 
 sub _authoritative_channel_is_known {
@@ -2949,11 +2748,6 @@ sub _sort_authoritative_events {
     map  { $_->[1] }
     sort { ((($a->[1]{created_at}) || 0) <=> (($b->[1]{created_at}) || 0)) || ($a->[0] <=> $b->[0]) } @decorated
   ];
-}
-
-sub _read_authoritative_grant_events {
-  my ($self, %args) = @_;
-  return Overnet::Program::IRC::Authority::Coordinator::read_authoritative_grant_events($self, %args);
 }
 
 sub _client_authoritative_pubkey {
@@ -4951,68 +4745,6 @@ sub _handle_authoritative_requests_command {
   );
 }
 
-sub _nick_in_use {
-  my ($self, $nick, %args) = @_;
-  my $key = $self->_nick_key($nick);
-  if (!(defined $key)) {
-    return 0;
-  }
-
-  my $owner = $self->{nick_to_client_id}{$key};
-  if (!(defined $owner)) {
-    return 0;
-  }
-
-  return 0
-    if defined $args{exclude_client_id} && $owner eq $args{exclude_client_id};
-  return 1;
-}
-
-sub _assign_client_nick {
-  my ($self, $client_id, $nick) = @_;
-  my $client = $self->{clients}{$client_id}
-    or return 0;
-  my $key = $self->_nick_key($nick);
-  if (!(defined $key)) {
-    return 0;
-  }
-
-  if ( defined $client->{nick}
-    && length($client->{nick})
-    && $client->{nick} ne $nick) {
-    $self->_release_client_nick($client_id, nick => $client->{nick},);
-  }
-
-  $client->{nick} = $nick;
-  $self->{nick_to_client_id}{$key} = $client_id;
-  return 1;
-}
-
-sub _release_client_nick {
-  my ($self, $client_id, %args) = @_;
-  my $nick =
-    defined $args{nick} ? $args{nick}
-    : (
-    exists $self->{clients}{$client_id} ? $self->{clients}{$client_id}{nick}
-    : undef
-    );
-  my $key = $self->_nick_key($nick);
-  if (!(defined $key)) {
-    return 0;
-  }
-
-  if (!(exists $self->{nick_to_client_id}{$key})) {
-    return 0;
-  }
-
-  if (!($self->{nick_to_client_id}{$key} eq $client_id)) {
-    return 0;
-  }
-
-  delete $self->{nick_to_client_id}{$key};
-  return 1;
-}
-
 sub _send_nick_in_use {
   my ($self, $client_id, $attempted_nick) = @_;
   my $client = $self->{clients}{$client_id}
@@ -5223,16 +4955,6 @@ sub _next_authoritative_created_at {
   my $next                = $now > $previous_created_at ? $now : $previous_created_at + 1;
   $self->{authoritative_last_created_at}{$key} = $next;
   return $next;
-}
-
-sub _publish_authoritative_nip29_event {
-  my ($self, %args) = @_;
-  return Overnet::Program::IRC::Authority::Coordinator::publish_authoritative_nip29_event($self, %args);
-}
-
-sub _append_authoritative_nip29_event {
-  my ($self, $channel, $event) = @_;
-  return Overnet::Program::IRC::Authority::Coordinator::append_authoritative_nip29_event($self, $channel, $event);
 }
 
 sub _is_authoritative_nip29_event {
@@ -6356,16 +6078,6 @@ sub _disconnect_client {
   return 1;
 }
 
-sub _handle_subscription_event {
-  my ($self, $params) = @_;
-  return Overnet::Program::IRC::Authority::Coordinator::handle_subscription_event($self, $params);
-}
-
-sub _handle_nostr_subscription_event {
-  my ($self, $params) = @_;
-  return Overnet::Program::IRC::Authority::Coordinator::handle_nostr_subscription_event($self, $params);
-}
-
 sub _render_subscription_item {
   my ($self, %args) = @_;
   my $item_type = $args{item_type};
@@ -7278,73 +6990,6 @@ sub _next_runtime_message {
   return shift @{$self->{pending_messages}};
 }
 
-sub _parse_irc_message {
-  my ($self, $line) = @_;
-  my %message = (
-    raw_line => $line,
-    params   => [],
-  );
-
-  if ($line =~ s/\A\@(\S+)\s+//mxs) {
-    $message{tags} = $self->_parse_irc_tags($1);
-  }
-
-  if ($line =~ s/\A:([^ ]+)\s+//mxs) {
-    my $prefix = $1;
-    $message{prefix} = $prefix;
-    if ($prefix =~ /\A([^!@]+)!([^@]+)\@(.+)\z/mxs) {
-      @message{qw(prefix_nick prefix_user prefix_host)} = ($1, $2, $3);
-    } else {
-      $message{prefix_nick} = $prefix;
-    }
-  }
-
-  my ($command, $rest) = split(/\ /mxs, $line, 2);
-  if (!(defined $command && length $command)) {
-    return;
-  }
-
-  $message{command} = uc($command);
-  if (!(defined $rest)) {
-    $rest = q{};
-  }
-
-  while (length $rest) {
-    $rest =~ s/\A\ +//mxs;
-    if (!(length $rest)) {
-      last;
-    }
-
-    if ($rest =~ s/\A:(.*)\z//mxs) {
-      push @{$message{params}}, $1;
-      last;
-    }
-
-    if ($rest =~ s/\A([^ ]+)//mxs) {
-      push @{$message{params}}, $1;
-      next;
-    }
-
-    last;
-  }
-
-  return \%message;
-}
-
-sub _parse_irc_tags {
-  my ($self, $raw) = @_;
-  my %tags;
-  for my $entry (split /;/mxs, $raw) {
-    my ($name, $value) = split /=/mxs, $entry, 2;
-    if (!(defined $name && length $name)) {
-      next;
-    }
-
-    $tags{$name} = defined $value ? $value : q{};
-  }
-  return \%tags;
-}
-
 sub _first_tag_values {
   my ($self, $tags) = @_;
   my %values;
@@ -7374,188 +7019,6 @@ sub _channel_object_id {
 sub _dm_object_id {
   my ($self, $nick) = @_;
   return q{irc:} . $self->{config}{network} . ':dm:' . $nick;
-}
-
-sub _channel_key {
-  my ($self, $channel) = @_;
-  if (!($self->_is_channel_name($channel))) {
-    return;
-  }
-
-  return $self->_irc_casefold($channel);
-}
-
-sub _canonical_channel_name {
-  my ($self, $channel) = @_;
-  my $key = $self->_channel_key($channel);
-  if (!(defined $key)) {
-    return;
-  }
-
-  return $self->{channels}{$key}{channel_name}
-    if exists $self->{channels}{$key}
-    && defined $self->{channels}{$key}{channel_name}
-    && length($self->{channels}{$key}{channel_name});
-  return $channel;
-}
-
-sub _client_joined_channel_name {
-  my ($self, $client, $channel) = @_;
-  if (!(ref($client) eq 'HASH')) {
-    return;
-  }
-
-  my $key = $self->_channel_key($channel);
-  if (!(defined $key)) {
-    return;
-  }
-
-  return $client->{joined_channels}{$key};
-}
-
-sub _channel_state {
-  my ($self, $channel) = @_;
-  my $key = $self->_channel_key($channel);
-  if (!(defined $key)) {
-    return;
-  }
-
-  return $self->{channels}{$key} ||= {
-    channel_name  => $channel,
-    members       => {},
-    visible_nicks => {},
-    topic_text    => undef,
-  };
-}
-
-sub _add_visible_nick {
-  my ($self, $channel, $nick) = @_;
-  my $nick_key = $self->_nick_key($nick);
-  if (!(defined $nick_key)) {
-    return 0;
-  }
-
-  my $state = $self->_channel_state($channel);
-  if (!($state)) {
-    return 0;
-  }
-
-  $state->{visible_nicks}{$nick_key} ||= {
-    count        => 0,
-    display_nick => $nick,
-  };
-  $state->{visible_nicks}{$nick_key}{display_nick} = $nick;
-  $state->{visible_nicks}{$nick_key}{count}++;
-  return $state->{visible_nicks}{$nick_key}{count};
-}
-
-sub _remove_visible_nick {
-  my ($self, $channel, $nick) = @_;
-  my $nick_key = $self->_nick_key($nick);
-  if (!(defined $nick_key)) {
-    return 0;
-  }
-
-  my $channel_key = $self->_channel_key($channel);
-  if (!(defined $channel_key)) {
-    return 0;
-  }
-
-  my $state = $self->{channels}{$channel_key}
-    or return 0;
-  if (!(exists $state->{visible_nicks}{$nick_key})) {
-    return 0;
-  }
-
-  $state->{visible_nicks}{$nick_key}{count}--;
-  if ($state->{visible_nicks}{$nick_key}{count} <= 0) {
-    delete $state->{visible_nicks}{$nick_key};
-  }
-  return 1;
-}
-
-sub _rename_visible_nick {
-  my ($self, $channel, %args) = @_;
-  my $old_nick = $args{old_nick};
-  my $new_nick = $args{new_nick};
-  my $old_key  = $self->_nick_key($old_nick);
-  my $new_key  = $self->_nick_key($new_nick);
-  if (!(defined $old_key)) {
-    return 0;
-  }
-
-  if (!(defined $new_key)) {
-    return 0;
-  }
-
-  my $channel_key = $self->_channel_key($channel);
-  if (!(defined $channel_key)) {
-    return 0;
-  }
-
-  my $state = $self->{channels}{$channel_key}
-    or return 0;
-  my $entry = delete $state->{visible_nicks}{$old_key}
-    or return 0;
-  my $count = $entry->{count} || 0;
-  $state->{visible_nicks}{$new_key} ||= {
-    count        => 0,
-    display_nick => $new_nick,
-  };
-  $state->{visible_nicks}{$new_key}{count} += $count;
-  $state->{visible_nicks}{$new_key}{display_nick} = $new_nick;
-  return $count;
-}
-
-sub _rename_visible_nick_everywhere {
-  my ($self, %args) = @_;
-  my $count = 0;
-
-  for my $channel (sort keys %{$self->{channels}}) {
-    $count += $self->_rename_visible_nick(
-      $channel,
-      old_nick => $args{old_nick},
-      new_nick => $args{new_nick},
-    ) || 0;
-  }
-
-  return $count;
-}
-
-sub _rename_client_channels {
-  my ($self, $client, %args) = @_;
-  if (!(ref($client) eq 'HASH')) {
-    return 0;
-  }
-
-  my $count = 0;
-  for my $channel (sort values %{$client->{joined_channels} || {}}) {
-    $count += $self->_rename_visible_nick(
-      $channel,
-      old_nick => $args{old_nick},
-      new_nick => $args{new_nick},
-    ) || 0;
-  }
-
-  return $count;
-}
-
-sub _visible_nicks_for_channel {
-  my ($self, $channel) = @_;
-  my $channel_key = $self->_channel_key($channel);
-  if (!(defined $channel_key)) {
-    return ();
-  }
-
-  my $state = $self->{channels}{$channel_key}
-    or return ();
-
-  my @nicks =
-    sort grep { defined && length }
-    map       { $state->{visible_nicks}{$_}{display_nick} }
-    grep      { ($state->{visible_nicks}{$_}{count} || 0) > 0 }
-    keys %{$state->{visible_nicks} || {}};
-  return @nicks;
 }
 
 sub _send_names_list {
@@ -7679,26 +7142,6 @@ sub _dm_nick_from_object_id {
   }
 
   return $nick;
-}
-
-sub _is_channel_name {
-  my ($self, $value) = @_;
-  return
-       defined $value
-    && !ref($value)
-    && $value =~ /\A[#&][^\x00\x07\r\n ,:]+\z/mxs
-    ? 1
-    : 0;
-}
-
-sub _is_nick_name {
-  my ($self, $value) = @_;
-  return
-       defined $value
-    && !ref($value)
-    && $value =~ /\A[^\x00\x07\r\n ,:#&][^\x00\x07\r\n ,:]*\z/mxs
-    ? 1
-    : 0;
 }
 
 sub _broadcast_channel_line {
@@ -7923,8 +7366,8 @@ sub _close_all_clients {
       $self->_close_socket($client->{socket});
     }
   }
-  $self->{channels}                         = {};
-  $self->{nick_to_client_id}                = {};
+  %{$self->{channels}}          = ();
+  %{$self->{nick_to_client_id}} = ();
   $self->{authoritative_last_created_at}    = {};
   $self->{authoritative_delegate_sequences} = {};
   return 1;
