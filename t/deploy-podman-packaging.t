@@ -99,6 +99,8 @@ like $readme_text, qr{\.config/containers/systemd}mx,
   'README documents the rootless Quadlet install path';
 
 my $workflow_text = _slurp($workflow);
+like $workflow_text, qr{apt-get\s+install[^\n]*\bpodman\b}mx,
+  'workflow installs the complete Podman package for Quadlet validation';
 like $workflow_text, qr{podman\s+build}mx, 'workflow builds the image';
 like $workflow_text, qr{\bContainerfile\b}mx, 'workflow builds from the Containerfile';
 like $workflow_text, qr{smoke-test\.sh}mx, 'workflow runs the smoke test';

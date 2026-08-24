@@ -35,6 +35,15 @@ jobs:
         with:
           path: irc-server
 
+      - name: Ensure the Podman Quadlet generator is installed
+        run: |
+          if ! test -x /usr/libexec/podman/quadlet \
+            && ! test -x /usr/lib/systemd/system-generators/podman-system-generator \
+            && ! test -x /usr/lib/systemd/user-generators/podman-user-generator; then
+            sudo apt-get update
+            sudo apt-get install --yes --reinstall podman
+          fi
+
       - name: Podman version
         run: podman version
 
