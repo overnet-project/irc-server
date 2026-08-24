@@ -68,6 +68,7 @@ jobs:
           cpanm --local-lib ~/perl5 --installdeps ./core-perl
           cpanm --local-lib ~/perl5 --installdeps ./relay-perl
           cpanm --local-lib ~/perl5 --installdeps ./irc-server
+          cpanm --local-lib ~/perl5 --notest --reinstall Net::Nostr::Core Net::Nostr::Client Net::Nostr::Relay
           cpanm --local-lib ~/perl5 --notest ./overnet-perl-style
           cpanm --local-lib ~/perl5 --notest Devel::Mutator
 
