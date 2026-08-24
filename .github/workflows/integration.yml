@@ -29,22 +29,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          repository: overnet-project/overnet-perl
+
+      - uses: actions/checkout@v4
+        with:
           path: irc-server
-
-      - uses: actions/checkout@v4
-        with:
-          repository: overnet-project/core-perl
-          path: core-perl
-
-      - uses: actions/checkout@v4
-        with:
-          repository: overnet-project/relay-perl
-          path: relay-perl
-
-      - uses: actions/checkout@v4
-        with:
-          repository: overnet-project/adapter-irc-perl
-          path: adapter-irc-perl
 
       - name: Podman version
         run: podman version

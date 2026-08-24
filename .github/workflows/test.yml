@@ -43,17 +43,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          repository: overnet-project/overnet-perl
+
+      - uses: actions/checkout@v4
+        with:
           path: irc-server
-
-      - uses: actions/checkout@v4
-        with:
-          repository: overnet-project/core-perl
-          path: core-perl
-
-      - uses: actions/checkout@v4
-        with:
-          repository: overnet-project/relay-perl
-          path: relay-perl
 
       - uses: shogo82148/actions-setup-perl@v1
         id: setup-perl
@@ -70,7 +64,7 @@ jobs:
           cpanm --local-lib ~/perl5 --installdeps ./core-perl
           cpanm --local-lib ~/perl5 --installdeps ./relay-perl
           cpanm --local-lib ~/perl5 --installdeps ./irc-server
-          cpanm --local-lib ~/perl5 --reinstall https://github.com/overnet-project/overnet-perl-style/archive/refs/heads/main.tar.gz
+          cpanm --local-lib ~/perl5 --notest ./overnet-perl-style
 
       - name: Run tests
         working-directory: irc-server
@@ -91,17 +85,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          repository: overnet-project/overnet-perl
+
+      - uses: actions/checkout@v4
+        with:
           path: irc-server
-
-      - uses: actions/checkout@v4
-        with:
-          repository: overnet-project/core-perl
-          path: core-perl
-
-      - uses: actions/checkout@v4
-        with:
-          repository: overnet-project/relay-perl
-          path: relay-perl
 
       - uses: shogo82148/actions-setup-perl@v1
         with:
@@ -117,7 +105,7 @@ jobs:
           cpanm --local-lib ~/perl5 --installdeps ./core-perl
           cpanm --local-lib ~/perl5 --installdeps ./relay-perl
           cpanm --local-lib ~/perl5 --installdeps ./irc-server
-          cpanm --local-lib ~/perl5 --reinstall https://github.com/overnet-project/overnet-perl-style/archive/refs/heads/main.tar.gz
+          cpanm --local-lib ~/perl5 --notest ./overnet-perl-style
           cpanm --local-lib ~/perl5 --notest Devel::Cover
           echo "$HOME/perl5/bin" >> "$GITHUB_PATH"
 

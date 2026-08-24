@@ -187,9 +187,9 @@ wire response construction remains in `Renderer`.
 ## Related Repositories
 
 - [spec](https://github.com/overnet-project/spec)
-- [core-perl](https://github.com/overnet-project/core-perl)
-- [relay-perl](https://github.com/overnet-project/relay-perl)
-- [adapter-irc-perl](https://github.com/overnet-project/adapter-irc-perl)
+- [core-perl](https://github.com/overnet-project/overnet-perl/tree/main/core-perl)
+- [relay-perl](https://github.com/overnet-project/overnet-perl/tree/main/relay-perl)
+- [adapter-irc-perl](https://github.com/overnet-project/overnet-perl/tree/main/adapter-irc-perl)
 
 ## AI Usage
 

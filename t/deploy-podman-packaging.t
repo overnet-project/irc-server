@@ -103,10 +103,10 @@ like $workflow_text, qr{podman\s+build}mx, 'workflow builds the image';
 like $workflow_text, qr{\bContainerfile\b}mx, 'workflow builds from the Containerfile';
 like $workflow_text, qr{smoke-test\.sh}mx, 'workflow runs the smoke test';
 like $workflow_text, qr{quadlet-check\.sh}mx, 'workflow runs the Quadlet check';
-for my $sibling (qw(core-perl relay-perl adapter-irc-perl)) {
-  like $workflow_text, qr{overnet-project/\Q$sibling\E}mx,
-    "workflow checks out the $sibling sibling";
-}
+like $workflow_text, qr{overnet-project/overnet-perl}mx,
+  'workflow gets all Perl platform components from the monorepo';
+unlike $workflow_text, qr{overnet-project/(?:core-perl|relay-perl|adapter-irc-perl)}mx,
+  'workflow does not check out superseded component repositories';
 
 # --- integrated frontend <-> authority-relay round-trip ----------------------
 
@@ -135,6 +135,10 @@ like $integ_test_text, qr{"kind":14142}mx,
   'integration test asserts the published grant reached the relay store';
 
 my $integ_wf_text = _slurp($integ_wf);
+like $integ_wf_text, qr{overnet-project/overnet-perl}mx,
+  'integration workflow gets all Perl platform components from the monorepo';
+unlike $integ_wf_text, qr{overnet-project/(?:core-perl|relay-perl|adapter-irc-perl)}mx,
+  'integration workflow does not check out superseded component repositories';
 like $integ_wf_text, qr{relay-perl/deploy/podman/Containerfile}mx,
   'integration workflow builds the relay image';
 like $integ_wf_text, qr{irc-server/deploy/podman/Containerfile}mx,
