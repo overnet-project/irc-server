@@ -1,4 +1,5 @@
 .plx/
+.claude/
 local/
 _eumm/
 blib/
