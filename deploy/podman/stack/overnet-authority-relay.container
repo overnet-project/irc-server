@@ -1,0 +1,37 @@
+[Unit]
+Description=Overnet IRC authority relay
+
+[Container]
+ContainerName=overnet-authority-relay
+Image=quay.io/overnet/relay:main
+Pull=never
+Network=overnet.network
+Volume=overnet-authority-relay.volume:/var/lib/overnet/authority-relay:Z
+
+ReadOnly=true
+ReadOnlyTmpfs=true
+NoNewPrivileges=true
+DropCapability=all
+PidsLimit=256
+
+Exec=authority \
+  --host 0.0.0.0 \
+  --port 7448 \
+  --relay-url ws://overnet-authority-relay:7448 \
+  --grant-kind 14142 \
+  --store-file /var/lib/overnet/authority-relay/store.json \
+  --health-file /var/lib/overnet/authority-relay/health.json
+
+HealthCmd=["/usr/bin/perl","-MIO::Socket::INET","-e","IO::Socket::INET->new(PeerAddr => q(127.0.0.1:7448), Timeout => 3) or exit 1"]
+HealthInterval=30s
+HealthTimeout=5s
+HealthStartPeriod=10s
+HealthRetries=3
+
+[Service]
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=120
+
+[Install]
+WantedBy=default.target

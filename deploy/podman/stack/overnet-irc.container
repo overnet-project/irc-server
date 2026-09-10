@@ -1,0 +1,36 @@
+[Unit]
+Description=Overnet IRC server
+Wants=overnet-authority-relay.service
+After=overnet-authority-relay.service
+
+[Container]
+ContainerName=overnet-irc
+Image=localhost/overnet-irc:latest
+Pull=never
+Network=overnet.network
+Volume=overnet-irc.volume:/var/lib/overnet/irc:Z
+PublishPort=127.0.0.1:6667:6667
+
+Exec=--adapter-id irc.public \
+  --network overnet \
+  --listen-host 0.0.0.0 \
+  --listen-port 6667 \
+  --server-name irc.overnet.local \
+  --group-host groups.overnet.local \
+  --authority-relay-url ws://overnet-authority-relay:7448 \
+  --signing-key-file /var/lib/overnet/irc/signing-key.pem \
+  --health-file /var/lib/overnet/irc/health.json
+
+HealthCmd=perl -MIO::Socket::INET -e "IO::Socket::INET->new(PeerAddr => '127.0.0.1:6667', Timeout => 3) or exit 1"
+HealthInterval=30s
+HealthTimeout=5s
+HealthStartPeriod=15s
+HealthRetries=3
+
+[Service]
+Restart=on-failure
+RestartSec=2
+TimeoutStartSec=120
+
+[Install]
+WantedBy=default.target

@@ -1,9 +1,17 @@
 # Overnet IRC server — podman deployment
 
-This directory packages the Overnet IRC server (the frontend IRC clients
-connect to) as a container image and a pair of
-[Quadlet](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html)
-units, so it can run and be supervised as a rootless `systemd --user` service.
+This directory packages a private IRC deployment: the IRC frontend, its
+authority relay, a shared network, and persistent state. After preparing the
+images, install and start the deployment with one command:
+
+```bash
+./irc-server/deploy/podman/install.sh
+```
+
+The installer uses the complete, checked-in [Quadlet](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html)
+configuration in `stack/`. The services already agree on their network, relay
+URL, and startup order. IRC is published on the server's loopback interface;
+the relay is accessible only inside the container network.
 
 It deploys the `overnet-irc-server service` command — the same entrypoint
 `deploy/systemd/overnet-irc.service` drives. The service is a supervisor: it
@@ -15,12 +23,13 @@ child process and reports readiness through a health file.
 | File | Purpose |
 | --- | --- |
 | `Containerfile` | Builds the image from sibling core-perl / relay-perl / adapter-irc-perl / irc-server checkouts. |
-| `overnet-irc.container` | Quadlet unit that runs the IRC server as a `systemd --user` service. |
-| `overnet-irc.volume` | Quadlet unit declaring the named volume for state (the signing key). |
+| `install.sh` | Installs the deployment and starts both services. |
+| `stack/` | Complete private deployment: two containers, two state volumes, and their shared network. |
+| `overnet-irc.container` / `overnet-irc.volume` | Optional standalone frontend configuration, also used by the image smoke test. |
 
 ## Prerequisites
 
-- `podman` 4.4+ (Quadlet support) with a usable `systemd --user` session. For a
+- `podman` 4.9+ (Quadlet support) with a usable `systemd --user` session. For a
   login-independent service, enable lingering: `loginctl enable-linger`.
 - A workspace containing sibling `core-perl/`, `relay-perl/`,
   `adapter-irc-perl/`, and `irc-server/` checkouts. Overnet core, the relay
@@ -28,33 +37,49 @@ child process and reports readiness through a health file.
   CPAN under the names the programs require), so all four must be present in the
   build context.
 
-## Build the image
+For example, as your deployment user:
+
+```bash
+git clone https://github.com/overnet-project/overnet-perl.git
+git clone https://github.com/overnet-project/irc-server.git overnet-perl/irc-server
+cd overnet-perl
+```
+
+## Prepare the images
 
 Run from the workspace directory that holds all four checkouts:
 
 ```bash
 podman build \
   --file irc-server/deploy/podman/Containerfile \
-  --tag overnet-irc:latest \
+  --tag localhost/overnet-irc:latest \
   .
+
+podman pull quay.io/overnet/relay:main
 ```
 
-## Install and start the service (rootless)
+## Install and start (rootless)
+
+Run as the same unprivileged user that prepared the images:
 
 ```bash
-mkdir -p ~/.config/containers/systemd
-cp irc-server/deploy/podman/overnet-irc.container \
-   irc-server/deploy/podman/overnet-irc.volume \
-   ~/.config/containers/systemd/
-
-systemctl --user daemon-reload
-systemctl --user start overnet-irc
+./irc-server/deploy/podman/install.sh
 ```
 
-Manage it like any user service:
+The installer copies the packaged configuration to
+`~/.config/containers/systemd/` (or `$XDG_CONFIG_HOME/containers/systemd/`),
+reloads systemd, then restarts the authority relay followed by IRC. It uses the
+images already present on the server. Startup errors are reported by systemd
+and Podman. The installer does not wait for application readiness; the
+configured container health checks monitor the listeners after startup.
+The packaged units start with the user manager; enable lingering if they must
+start at boot and survive logout. Re-running the installer refreshes these unit
+files and restarts both services while retaining the existing state volumes.
+
+Manage them like any user service:
 
 ```bash
-systemctl --user status overnet-irc
+systemctl --user status overnet-authority-relay overnet-irc
 journalctl --user -u overnet-irc -f
 ```
 
@@ -74,31 +99,38 @@ connect with an IRC client (loopback by default):
 # e.g. irssi -c 127.0.0.1 -p 6667
 ```
 
-## Connecting to a relay (hosted channels)
+## Hosted channels
 
-By default the server runs standalone — it listens and serves, but hosts no
-authoritative (NIP-29) channels. To serve hosted channels, add **both** an
-authority relay URL and a group host to the unit's `Exec=` line and reload:
+The packaged deployment runs the relay image's `authority` role. Both services
+use `ws://overnet-authority-relay:7448`, and IRC sets the group host to
+`groups.overnet.local`. These settings are already present in `stack/`; they
+require no operator edits. The server announces `irc.overnet.local` on network
+`overnet`; use those values when configuring your client's auth agent.
 
+The installer establishes the services, not group membership. Admit test
+identities to the hosted channels before testing channel access. If importing
+group-metadata snapshots, configure the authority relay's trusted signers with
+`--snapshot-pubkey`; it trusts none by default. See the authority-relay section
+of `relay-perl/deploy/podman/README.md`.
+
+For access from your workstation, keep the loopback binding and open an SSH
+tunnel:
+
+```bash
+ssh -N -L 16667:127.0.0.1:6667 USER@HOME_SERVER
 ```
---authority-relay-url ws://overnet-relay:7447 --group-host groups.example.net
-```
 
-Both are required. A channel is treated as authoritative only when
-`--group-host` is set (`_is_authoritative_channel` in `Server.pm`), so a server
-given only the relay URL still connects to the relay and still serves every
-channel as an ordinary local one, with no error to say why. The shipped
-`overnet-irc.container` already passes `--group-host`.
-
-Point it at the `overnet-relay` deployment (see `relay-perl/deploy/podman/`).
+Point your local Overnet auth proxy at `127.0.0.1:16667`, then connect your IRC
+client to that proxy. The main IRC README documents identity and proxy setup.
 
 ## Configuration
 
-Tuning knobs are the `overnet-irc-server service` arguments on the unit's
-`Exec=` line. Edit them in place, then reload:
+The installer owns the packaged unit files. Put local changes in Quadlet
+drop-ins, such as `~/.config/containers/systemd/overnet-irc.container.d/`, so
+re-running it preserves your overrides. When replacing `Exec=`, include the
+complete argument list from the packaged unit. Then reload and restart:
 
 ```bash
-$EDITOR ~/.config/containers/systemd/overnet-irc.container
 systemctl --user daemon-reload
 systemctl --user restart overnet-irc
 ```
@@ -135,10 +167,18 @@ or letting it self-sign) and publishing the TLS port.
 
 ## Updating
 
-Rebuild the image and restart; the state volume is independent of the image, so
-the signing key is retained:
+Rebuild the IRC image, explicitly pull any desired relay update, and rerun the
+installer. The state volumes are independent of the images, so the signing key
+and event store are retained:
 
 ```bash
-podman build --file irc-server/deploy/podman/Containerfile --tag overnet-irc:latest .
-systemctl --user restart overnet-irc
+podman build --file irc-server/deploy/podman/Containerfile --tag localhost/overnet-irc:latest .
+podman pull quay.io/overnet/relay:main
+./irc-server/deploy/podman/install.sh
 ```
+
+## Standalone frontend
+
+For an IRC frontend without a hosted-channel relay, install only the original
+`overnet-irc.container` and `overnet-irc.volume` files beside this README. The
+default `install.sh` installs the complete hosted deployment instead.

@@ -8,10 +8,16 @@ deploy/podman/Containerfile
 deploy/podman/README.md
 deploy/podman/integration-client.pl
 deploy/podman/integration-test.sh
+deploy/podman/install.sh
 deploy/podman/overnet-irc.container
 deploy/podman/overnet-irc.volume
 deploy/podman/quadlet-check.sh
 deploy/podman/smoke-test.sh
+deploy/podman/stack/overnet.network
+deploy/podman/stack/overnet-irc.container
+deploy/podman/stack/overnet-irc.volume
+deploy/podman/stack/overnet-authority-relay.container
+deploy/podman/stack/overnet-authority-relay.volume
 deploy/systemd/overnet-irc-authority-relay@.service
 deploy/systemd/overnet-irc.env.example
 deploy/systemd/overnet-irc.service
@@ -47,6 +53,7 @@ t/bin-syntax.t
 t/command-auth.t
 t/command-channel.t
 t/deploy-podman-packaging.t
+t/deploy-install.t
 t/dispatcher.t
 t/host-cloak.t
 t/irc-auth-cli.t

@@ -1,0 +1,5 @@
+[Unit]
+Description=Overnet IRC server state
+
+[Volume]
+VolumeName=overnet-irc-state
