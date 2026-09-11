@@ -7,6 +7,7 @@ use English      qw(-no_match_vars);
 use JSON         ();
 use MIME::Base64 qw(decode_base64 encode_base64);
 use Overnet::Auth::Bridge::IRC;
+use Overnet::Auth::Exchange;
 use Overnet::Program::IRC::Renderer ();
 
 our $VERSION = '0.001';
@@ -55,22 +56,8 @@ sub _authorize_auth_artifact {
     croak "--scope is required\n";
   }
 
-  return $class->_authorize_artifact(
-    %args,
-    action    => 'session.authenticate',
-    challenge => {
-      type  => 'opaque',
-      value => $challenge,
-    },
-    artifacts => [
-      {
-        type   => 'nostr.event',
-        params => {
-          kind => 22_242,
-          tags => [[relay => $scope], [challenge => $challenge],],
-        },
-      },
-    ],
+  return $class->_authorize_artifact(%args,
+    %{Overnet::Auth::Exchange->authentication_request(challenge => $challenge, scope => $scope,)},
   );
 }
 
@@ -112,32 +99,7 @@ sub _authorize_delegate_artifact {
     croak "--expires-at is required\n";
   }
 
-  my @tags = (
-    [relay      => $relay_url],
-    [server     => $scope],
-    [delegate   => $delegate_pubkey],
-    [session    => $session_id],
-    [expires_at => $expires_at],
-  );
-  if (defined($args{nick}) && !ref($args{nick}) && length($args{nick})) {
-    push @tags, [nick => $args{nick}];
-  }
-
-  return $class->_authorize_artifact(
-    %args,
-    action    => 'session.delegate',
-    artifacts => [
-      {
-        type   => 'nostr.event',
-        params => {
-          kind => defined($args{grant_kind})
-          ? $args{grant_kind}
-          : 14_142,
-          tags => \@tags,
-        },
-      },
-    ],
-  );
+  return $class->_authorize_artifact(%args, %{Overnet::Auth::Exchange->delegation_request(%args)},);
 }
 
 sub _bridge_line {
@@ -403,80 +365,39 @@ sub _render_sasl_response {
   my ($class, %args) = @_;
   my $challenge_payload = $args{challenge_payload};
 
-  my ($challenge, $scope) = _sasl_challenge_scope($challenge_payload);
-  if (!(defined $challenge)) {
+  my $exchange = Overnet::Auth::Exchange->parse_challenge($challenge_payload);
+  if (!$exchange) {
     return ();
   }
 
   my %response = (
     auth_event => $class->_authorize_auth_artifact(
       %args,
-      scope     => $scope,
-      challenge => $challenge,
+      scope     => $exchange->{scope},
+      challenge => $exchange->{challenge},
     )->{value},
   );
 
-  if (_sasl_delegate_required($challenge_payload)) {
+  if ($exchange->{delegation_required}) {
     if (exists($args{auto_delegate}) && !$args{auto_delegate}) {
       croak "SASL NOSTR delegation is disabled\n";
     }
-    my $delegate = _sasl_delegate_payload($challenge_payload);
+    my $delegate = $exchange->{delegation};
+    if (!$delegate) {
+      croak "malformed SASL NOSTR challenge payload\n";
+    }
     $response{delegate_event} = $class->_authorize_delegate_artifact(
       %args,
-      scope => $scope,
+      scope => $exchange->{scope},
       %{$delegate},
     )->{value};
   }
 
-  my $payload = encode_base64(JSON::encode_json(\%response), q{});
-  my $lines   = Overnet::Program::IRC::Renderer::authenticate_payload_lines(payload => $payload,);
+  my $response = Overnet::Auth::Exchange->response_payload(%response);
+  my $payload  = encode_base64(JSON::encode_json($response), q{});
+  my $lines    = Overnet::Program::IRC::Renderer::authenticate_payload_lines(payload => $payload,);
 
   return map { $args{quote} ? "/quote $_\n" : "$_\n" } @{$lines};
-}
-
-sub _sasl_challenge_scope {
-  my ($payload) = @_;
-  return if !(ref($payload) eq 'HASH');
-  return if !_nonempty_scalar($payload->{challenge});
-  return if !_nonempty_scalar($payload->{scope});
-  return ($payload->{challenge}, $payload->{scope});
-}
-
-sub _sasl_delegate_required {
-  my ($payload) = @_;
-  return 0 if !(ref($payload) eq 'HASH');
-  for my $field (_sasl_delegate_fields()) {
-    return 1 if exists $payload->{$field};
-  }
-  return 0;
-}
-
-sub _sasl_delegate_payload {
-  my ($payload) = @_;
-  my @fields = _sasl_delegate_fields();
-  for my $field (@fields) {
-    if (!_nonempty_scalar($payload->{$field})) {
-      croak "malformed SASL NOSTR challenge payload\n";
-    }
-  }
-  return {map { ($_ => $payload->{$_}) } @fields};
-}
-
-sub _sasl_delegate_fields {
-  my @fields;
-  push @fields, 'relay_url';
-  push @fields, 'grant_kind';
-  push @fields, 'delegate_pubkey';
-  push @fields, 'session_id';
-  push @fields, 'expires_at';
-  return @fields;
-}
-
-sub _nonempty_scalar {
-  my ($value) = @_;
-  return 0 if !defined $value;
-  return 0 if ref($value);
-  return length($value) ? 1 : 0;
 }
 
 sub _render_irc_artifact {

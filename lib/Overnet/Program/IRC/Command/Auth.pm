@@ -5,6 +5,7 @@ use English      qw(-no_match_vars);
 use JSON         ();
 use MIME::Base64 qw(decode_base64 encode_base64);
 use Overnet::Authority::Delegation;
+use Overnet::Auth::Exchange;
 use Overnet::Core::Nostr;
 use Overnet::Program::IRC::Renderer ();
 
@@ -323,28 +324,25 @@ sub start_sasl_nostr_exchange {
   }
 
   my $challenge = $server->_generate_authoritative_auth_challenge($client);
-  my %payload   = (
-    challenge => $challenge,
-    scope     => $server->_authoritative_auth_scope,
-  );
+  my $delegate;
 
   if ($server->_authority_relay_enabled) {
-    my $delegate = ensure_authoritative_delegate_offer($server, $client);
+    $delegate = ensure_authoritative_delegate_offer($server, $client);
     if (!(ref($delegate) eq 'HASH')) {
       return;
     }
-
-    @payload{qw(relay_url grant_kind delegate_pubkey session_id expires_at)} = (
-      $delegate->{relay_url},  $delegate->{grant_kind}, $delegate->{delegate_pubkey},
-      $delegate->{session_id}, $delegate->{expires_at},
-    );
   }
 
+  my $payload = Overnet::Auth::Exchange->challenge_payload(
+    challenge  => $challenge,
+    scope      => $server->_authoritative_auth_scope,
+    delegation => $delegate,
+  );
   $client->{authority_challenge}    = $challenge;
   $client->{sasl_mechanism}         = 'NOSTR';
   $client->{sasl_buffer}            = q{};
-  $client->{sasl_challenge_payload} = \%payload;
-  return \%payload;
+  $client->{sasl_challenge_payload} = $payload;
+  return $payload;
 }
 
 sub complete_sasl_exchange {

@@ -966,9 +966,6 @@ subtest 'undecodable SASL buffers are dropped instead of answered' => sub {
   );
   is \@not_hash_payload, [], 'a non-hash challenge payload renders nothing';
 
-  is Overnet::Program::IRC::Auth::Helper::_sasl_delegate_required([]), 0,
-    'a non-hash payload never requires delegation';
-
   is scalar @{$client->calls}, 0, 'no auth agent calls were made for dropped buffers';
 };
 
