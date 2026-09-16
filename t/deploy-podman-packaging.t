@@ -127,7 +127,7 @@ unlike $client_text, qr{use\s+Test}mx,
   'integration client does not depend on test-only modules';
 
 my $integ_test_text = _slurp($integ_test);
-like $integ_test_text, qr{overnet-authority-relay\.pl}mx,
+like $integ_test_text, qr{^\s*authority\s+\\$}mx,
   'integration test launches the authority relay entrypoint';
 like $integ_test_text, qr{--authority-relay-url}mx,
   'integration test wires the frontend to the relay';

@@ -27,6 +27,8 @@ ENV PERL5LIB=/opt/overnet/core-perl/lib:/opt/overnet/relay-perl/lib
 RUN apt-get update \
   && apt-get install --yes --no-install-recommends \
        build-essential \
+       ca-certificates \
+       curl \
        libssl-dev \
        libgmp-dev \
        zlib1g-dev \
@@ -45,7 +47,8 @@ COPY relay-perl       /opt/overnet/relay-perl
 COPY adapter-irc-perl /opt/overnet/adapter-irc-perl
 COPY irc-server       /opt/overnet/irc-server
 
-RUN cpanm --notest --installdeps /opt/overnet/core-perl \
+RUN sh /opt/overnet/core-perl/maint/install-net-nostr.sh --notest \
+  && cpanm --notest --installdeps /opt/overnet/core-perl \
   && cpanm --notest --installdeps /opt/overnet/relay-perl \
   && cpanm --notest --installdeps /opt/overnet/adapter-irc-perl \
   && cpanm --notest --installdeps /opt/overnet/irc-server \

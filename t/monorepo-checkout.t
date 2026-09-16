@@ -26,8 +26,7 @@ for my $workflow (@workflows) {
 
   my $dependency_steps = () = $content =~ /name:\s+Install\s+dependencies/gmx;
   my $coherent_nostr_installs = () = $content =~ m{
-    cpanm\s+--local-lib\s+~/perl5\s+--notest\s+--reinstall\s+
-    Net::Nostr::Core\s+Net::Nostr::Client\s+Net::Nostr::Relay
+    sh\s+[.]?/core-perl/maint/install-net-nostr[.]sh\s+--local-lib\s+~/perl5\s+--notest
   }gmx;
   is $coherent_nostr_installs, $dependency_steps,
     "$workflow refreshes the split Net::Nostr distributions in each dependency step";

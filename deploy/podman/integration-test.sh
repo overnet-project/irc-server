@@ -57,12 +57,11 @@ wait_ready() {
 podman network create "$net" >/dev/null
 echo "integration: network $net"
 
-# --- authority relay: the same relay image, entrypoint overridden -----------
+# --- authority relay: use the relay image's authority entrypoint -----------
 echo "integration: starting authority relay"
 podman run --detach --name "$relay" --network "$net" \
-  --entrypoint=perl \
   "$RELAY_IMAGE" \
-  /opt/overnet/relay-perl/bin/overnet-authority-relay.pl \
+  authority \
   --host 0.0.0.0 --port 7448 \
   --relay-url "$relay_url" \
   --grant-kind 14142 \
