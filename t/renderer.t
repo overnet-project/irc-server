@@ -20,13 +20,13 @@ subtest 'authenticate_payload_lines chunks payloads into 400-byte AUTHENTICATE l
     'an empty payload renders the empty-payload marker';
 
   is Overnet::Program::IRC::Renderer::authenticate_payload_lines(payload => ('a' x 400),),
-    ['AUTHENTICATE ' . ('a' x 400),], 'a payload of exactly 400 bytes stays on one line';
+    ['AUTHENTICATE ' . ('a' x 400), 'AUTHENTICATE +'], 'a full chunk has an explicit terminator';
 
   is Overnet::Program::IRC::Renderer::authenticate_payload_lines(payload => ('a' x 400) . 'b',),
     ['AUTHENTICATE ' . ('a' x 400), 'AUTHENTICATE b',], 'a payload of 401 bytes splits into two lines';
 
   is Overnet::Program::IRC::Renderer::authenticate_payload_lines(payload => ('a' x 400) . ('b' x 400),),
-    ['AUTHENTICATE ' . ('a' x 400), 'AUTHENTICATE ' . ('b' x 400),],
+    ['AUTHENTICATE ' . ('a' x 400), 'AUTHENTICATE ' . ('b' x 400), 'AUTHENTICATE +'],
     'a payload of exactly 800 bytes splits into two full lines';
 
   is Overnet::Program::IRC::Renderer::authenticate_payload_lines(payload => ('a' x 400) . ('b' x 400) . 'c',),
@@ -201,7 +201,7 @@ subtest 'invite and authoritative invite numerics' => sub {
     'renderer formats end-of-authoritative-join-request-list';
 };
 
-subtest 'channel_mode_is_line appends only usable mode arguments' => sub {
+subtest 'channel_mode_is_line rejects malformed mode arguments' => sub {
   my %chan = (%common, channel => '#overnet',);
 
   is Overnet::Program::IRC::Renderer::channel_mode_is_line(
@@ -209,8 +209,8 @@ subtest 'channel_mode_is_line appends only usable mode arguments' => sub {
     channel_modes => '+ntkl',
     mode_args     => ['sekrit', undef, q{}, ['not-a-string'], '10',],
     ),
-    ':overnet.irc.local 324 alice #overnet +ntkl sekrit 10',
-    'undef, empty, and reference mode arguments are dropped from the suffix';
+    undef,
+    'malformed arguments suppress the entire line';
 
   is Overnet::Program::IRC::Renderer::channel_mode_is_line(%chan, channel_modes => '+nt',),
     ':overnet.irc.local 324 alice #overnet +nt', 'missing mode arguments render no suffix';

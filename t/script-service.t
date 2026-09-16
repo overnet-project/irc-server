@@ -222,4 +222,18 @@ subtest 'a failed adapter registration croaks' => sub {
     'a rejected adapter definition croaks';
 };
 
+subtest 'snapshot trust pins reach the server configuration' => sub {
+  local $ENV{XDG_STATE_HOME} = $tempdir;
+  my $captured;
+  my $host = _mock_host();
+  my $capture_host = mock 'Overnet::Program::Host' => (around => [new => sub {
+    my ($orig, $class, @args) = @_;
+    $captured = {@args};
+    return $orig->($class, @args);
+  }]);
+  is _run('--snapshot-pubkey', 'a' x 64, '--snapshot-pubkey', 'b' x 64)->{exit}, 0, 'pinned service starts';
+  is $captured->{runtime}->config->{adapter_config}{snapshot_pubkeys}, ['a' x 64, 'b' x 64], 'all pins passed through';
+  like dies { $package->run('--snapshot-pubkey', 'untrusted-name') }, qr/snapshot-pubkey/, 'malformed pin refused';
+};
+
 done_testing;

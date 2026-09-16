@@ -28,13 +28,14 @@ sub run {
   my ($class, @argv) = @_;
 
   my %options = (
-    adapter_id      => 'irc.service',
-    network         => 'overnet',
-    listen_host     => '127.0.0.1',
-    listen_port     => 16_667,
-    server_name     => 'irc.overnet.local',
-    tls             => 0,
-    tls_min_version => 'TLSv1.2',
+    adapter_id       => 'irc.service',
+    network          => 'overnet',
+    listen_host      => '127.0.0.1',
+    listen_port      => 16_667,
+    server_name      => 'irc.overnet.local',
+    snapshot_pubkeys => [],
+    tls              => 0,
+    tls_min_version  => 'TLSv1.2',
   );
   my @channel_group_args;
   my $health_file;
@@ -51,6 +52,7 @@ sub run {
     'signing-key-file=s'                 => \$options{signing_key_file},
     'group-host=s'                       => \$options{group_host},
     'channel-group=s'                    => \@channel_group_args,
+    'snapshot-pubkey=s'                  => $options{snapshot_pubkeys},
     'authority-relay-url=s'              => \$options{authority_relay_url},
     'authority-relay-query-timeout-ms=i' => \$options{authority_relay_query_timeout_ms},
     'authority-relay-poll-interval-ms=i' => \$options{authority_relay_poll_interval_ms},
@@ -150,6 +152,13 @@ sub _adapter_config {
   }
   if (@{$channel_group_args}) {
     $adapter_config->{channel_groups} = _parse_channel_groups($channel_group_args);
+  }
+  if (@{$options->{snapshot_pubkeys} || []}) {
+    for my $pubkey (@{$options->{snapshot_pubkeys}}) {
+      croak '--snapshot-pubkey must be a 64-char lowercase hex pubkey'
+        if $pubkey !~ /\A[0-9a-f]{64}\z/mxs;
+    }
+    $adapter_config->{snapshot_pubkeys} = [@{$options->{snapshot_pubkeys}}];
   }
   return $adapter_config;
 }
@@ -407,6 +416,7 @@ Usage: overnet-irc-server service [options]
   --signing-key-file PATH
   --group-host HOST
   --channel-group CHANNEL=GROUP_ID
+  --snapshot-pubkey PUBKEY   (repeatable; explicitly trusted snapshot signer)
   --authority-relay-url URL
   --authority-relay-query-timeout-ms N
   --authority-relay-poll-interval-ms N

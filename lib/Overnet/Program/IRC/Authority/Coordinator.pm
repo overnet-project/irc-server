@@ -4,6 +4,7 @@ use strictures 2;
 use Moo;
 
 use English qw(-no_match_vars);
+use JSON    ();
 use Overnet::Authority::HostedChannel;
 
 our $VERSION = '0.001';
@@ -285,6 +286,7 @@ sub ensure_authoritative_channel_subscription {
   );
 
   my @subscription_ids;
+  my @opened_events;
   for my $spec (@subscription_specs) {
     my ($subscription_id, $filters) = @{$spec};
     if (!(defined $subscription_id)) {
@@ -302,17 +304,22 @@ sub ensure_authoritative_channel_subscription {
             filters         => $filters,
           },
         );
-        1;
       };
       if (!($opened)) {
         next;
       }
 
       $server->{authoritative_subscription_channels}{$subscription_id} = $canonical;
+      if (ref($opened) eq 'HASH' && ref($opened->{events}) eq 'ARRAY') {
+        push @opened_events, @{$opened->{events}};
+      }
     }
     push @subscription_ids, $subscription_id;
   }
 
+  # Initial snapshot events are already considered delivered by the runtime.
+  # They must be reconciled here even when no later live notification follows.
+  $self->_apply_new_authoritative_snapshot_events($canonical, \@opened_events);
   return \@subscription_ids;
 }
 
@@ -330,7 +337,7 @@ sub read_nostr_subscription_snapshot {
         subscription_id => $subscription_id,
         (
           defined $args{refresh}
-          ? (refresh => $args{refresh} ? 1 : 0)
+          ? (refresh => $args{refresh} ? JSON::true : JSON::false)
           : ()
         ),
       },
@@ -579,6 +586,11 @@ sub refresh_authoritative_nip29_channel_cache {
   my $events =
     $self->load_authoritative_nip29_events($canonical, (defined $args{refresh} ? (refresh => $args{refresh}) : ()),);
   $events = $self->_merge_authoritative_events($old_events, $events);
+
+  # A snapshot can overtake queued live notifications. Apply new controls
+  # before replacing the view, so those notifications cannot lose their diff.
+  $self->_apply_new_authoritative_snapshot_events($canonical, $events);
+  $cache = $server->{authoritative_channel_cache}{$canonical};
   my $view = $server->_derive_authoritative_channel_view_from_events($canonical, $events);
   $cache->{events}       = $events;
   $cache->{view}         = $view;
@@ -587,6 +599,25 @@ sub refresh_authoritative_nip29_channel_cache {
   $server->_sync_authoritative_topic_state_from_view($canonical, $view);
 
   return $events;
+}
+
+sub _apply_new_authoritative_snapshot_events {
+  my ($self, $channel, $events) = @_;
+  my $server = $self->server;
+  my $cache  = $server->{authoritative_channel_cache}{$channel} || {};
+  if (!$server->_authority_relay_enabled || ref($cache->{view}) ne 'HASH') {
+    return 0;
+  }
+
+  my $old_events = $cache->{events} || [];
+  my %old_ids    = map { (_event_id($_) // q{}) => 1 } @{$old_events};
+  for my $event (@{$self->_merge_authoritative_events($old_events, $events)}) {
+    my $id = _event_id($event);
+    next if !defined($id) || $old_ids{$id};
+    $server->_update_authoritative_channel_cache_with_event(channel => $channel, event => $event);
+    $self->_remember_rendered_subscription_event_id($id);
+  }
+  return 1;
 }
 
 sub read_authoritative_nip29_events {

@@ -1,6 +1,7 @@
 package Overnet::Program::IRC::Script::Connect;
 
 use strictures 2;
+use Overnet::Core::JSON ();
 
 use English qw(-no_match_vars);
 use File::Spec;
@@ -136,7 +137,7 @@ sub _endpoint_from_config {
   close $fh
     or die "close $path failed: $OS_ERROR\n";
 
-  my $config = JSON->new->decode($json);
+  my $config = Overnet::Core::JSON::decode_json($json);
   if (!(ref($config) eq 'HASH' && ref($config->{daemon}) eq 'HASH')) {
     die "$path has no daemon section\n";
   }

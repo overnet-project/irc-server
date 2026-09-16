@@ -25,6 +25,14 @@ By default the client auto-joins `#overnet`. Plain text sends to the current tar
 
 ## Connecting to an authenticated server
 
+The native proxy flow below requires an auth agent with a protected caller
+binding supplied by its embedding host. The default Perl command-line daemon
+currently allows discovery only and refuses signing and administration; setting
+`program_id` in a request or policy does not authenticate the caller. See the
+[Perl agent deployment limits](https://github.com/overnet-project/spec/blob/main/docs/operations/perl-auth-agent.md).
+The TypeScript browser extension uses its own agent and remains the browser
+sign-in path.
+
 An Overnet IRC server does not take a password. It asks your client to sign two
 Nostr events: one proving which key you are, and one delegating limited
 authority to the server for this session. Ordinary IRC clients cannot do that,
@@ -173,6 +181,12 @@ that behavior explicit.
 - It auto-creates a Nostr signing key under the local state directory unless you pass `--signing-key-file`.
 - The local demo client is intentionally small. It is a convenience terminal client for exercising the Overnet IRC server, not a full IRC client.
 - `overnet-irc-server auth` uses the local auth agent. It does not read raw private keys directly.
+
+Authoritative snapshots require explicit signer pins. Pass the same repeatable
+`--snapshot-pubkey PUBKEY` options to `service` and `authority-relay-service`.
+Without pins, snapshots cannot supply channel membership or operator authority;
+validated delegated control events still work. Obtain signer keys through your
+trusted configuration, never from an unverified snapshot.
 
 ## Internal Design
 

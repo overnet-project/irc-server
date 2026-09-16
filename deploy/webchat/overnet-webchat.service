@@ -1,0 +1,14 @@
+[Unit]
+Description=Overnet web IRC client
+Wants=overnet-irc.service
+After=overnet-irc.service
+
+[Service]
+WorkingDirectory=%h/.local/share/overnet-webchat
+ExecStart=%h/.local/share/overnet-webchat/kiwiirc --config=%h/.local/share/overnet-webchat/config.conf
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

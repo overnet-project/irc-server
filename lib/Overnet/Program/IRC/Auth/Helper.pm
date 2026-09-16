@@ -1,6 +1,7 @@
 package Overnet::Program::IRC::Auth::Helper;
 
 use strictures 2;
+use Overnet::Core::JSON ();
 
 use Carp         qw(croak);
 use English      qw(-no_match_vars);
@@ -328,6 +329,12 @@ sub _consume_sasl_chunk {
   my $state = $args{state} || {};
   my $chunk = $args{chunk};
 
+  if ( length($chunk) > 400
+    || $chunk =~ /[^A-Za-z0-9+\/=]/mxs
+    || length($state->{buffer} || q{}) + length($chunk) > 65_536) {
+    delete $state->{buffer};
+    return ();
+  }
   if (!($chunk eq q{+})) {
     $state->{buffer} .= $chunk;
   }
@@ -348,12 +355,7 @@ sub _flush_sasl_chunk_state {
     return ();
   }
 
-  my $decoded = eval { decode_base64($buffer) };
-  if (!(defined $decoded)) {    # uncoverable branch true reason: decode_base64 skips invalid bytes instead of failing
-    return ();    # uncoverable statement reason: defensive guard for a decode_base64 failure that cannot happen
-  }
-
-  my $challenge_payload = eval { JSON::decode_json($decoded) };
+  my $challenge_payload = eval { Overnet::Core::JSON::decode_base64_json($buffer) };
   if (!(ref($challenge_payload) eq 'HASH')) {
     return ();
   }

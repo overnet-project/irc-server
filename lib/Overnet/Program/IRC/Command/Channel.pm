@@ -434,7 +434,9 @@ sub _complete_join {
   my $channel   = $args{channel};
 
   $server->_add_client_to_channel($client_id, $channel);
-  $server->_broadcast_channel_line($channel, sprintf(':%s JOIN %s', $client->{nick}, $channel),);
+  $server->_broadcast_channel_line($channel,
+    Overnet::Program::IRC::Renderer::format_line(':%s JOIN %s', $client->{nick}, $channel),
+  );
   $server->_send_join_bootstrap($client_id, $channel);
   $server->_ensure_channel_subscription($channel);
   if ( $server->_authority_relay_enabled
@@ -488,9 +490,9 @@ sub handle_part {
     );
   }
 
-  my $line = sprintf(':%s PART %s', $client->{nick}, $channel);
+  my $line = Overnet::Program::IRC::Renderer::format_line(':%s PART %s', $client->{nick}, $channel);
   if (defined $reason && length $reason) {
-    $line .= ' :' . $reason;
+    $line = Overnet::Program::IRC::Renderer::append_reason($line, $reason);
   }
 
   $server->_broadcast_channel_line($channel, $line);

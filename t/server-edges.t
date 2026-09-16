@@ -633,6 +633,7 @@ subtest 'publish and emit guard their payload shapes' => sub {
     authority_pubkey            => 'a' x 64,
     authority_delegate_key      => $key,
     authority_delegate_event_id => 'b' x 64,
+    authority_delegate_expires_at => time + 3600,
   );
 
   is $server->_publish_authoritative_input('nope', {}), 0, 'a malformed client publishes nothing';
@@ -662,6 +663,7 @@ subtest 'publish and emit guard their payload shapes' => sub {
     authority_pubkey            => 'a' x 64,
     authority_delegate_key      => $key,
     authority_delegate_event_id => 'b' x 64,
+    authority_delegate_expires_at => time + 3600,
   );
   $listy->request_handler(
     sub {
@@ -1227,10 +1229,10 @@ subtest 'more registration and reply corners' => sub {
 subtest 'derive and cache corners' => sub {
   my $server = _server();
   my $tied = $server->_sort_authoritative_events([
-    {id => 'b', created_at => 5,},
-    {id => 'a', created_at => 5,},
+    {id => 'b' x 64, created_at => 5, kind => 9000, tags => [],},
+    {id => 'a' x 64, created_at => 5, kind => 9000, tags => [],},
   ]);
-  is [map { $_->{id} } @{$tied}], ['b', 'a'], 'equal timestamps keep their input order';
+  is [map { $_->{id} } @{$tied}], ['a' x 64, 'b' x 64], 'equal timestamps and phases use event ID';
 
   $server->{authoritative_channel_cache}{$channel} = {events => 'nope',};
   ok !$server->_authoritative_channel_is_known($channel), 'a malformed cache is not known';
@@ -1266,7 +1268,7 @@ subtest 'derive and cache corners' => sub {
   for my $kind (9000, 9001, 9_002, 9009, 9021, 9022, 39_000, 39_001, 39_002, 39_003) {
     ok $server->_is_authoritative_nip29_event(
       channel => $channel,
-      event   => {kind => $kind, tags => [['h', $group_id],],},
+      event   => {kind => $kind, tags => [[$kind >= 39_000 ? 'd' : 'h', $group_id],],},
     ), "kind $kind is an authoritative NIP-29 event";
   }
   ok !$server->_is_authoritative_nip29_event(
@@ -1287,7 +1289,7 @@ subtest 'derive and cache corners' => sub {
     }
   );
   $server->{authoritative_channel_cache}{$channel} = {
-    events => [{id => '5' x 64, kind => 9021, created_at => 1,},],
+    events => [{id => '5' x 64, kind => 9021, created_at => 1, tags => [],},],
     view   => {members => [],},
   };
   my $unidentified = {kind => 9021, created_at => 2, tags => [],};
@@ -1295,7 +1297,7 @@ subtest 'derive and cache corners' => sub {
     'an event without an id still updates the cache';
   is $server->_update_authoritative_channel_cache_with_event(
     channel => $channel,
-    event   => {id => '5' x 64, kind => 9021, created_at => 1,},
+    event   => {id => '5' x 64, kind => 9021, created_at => 1, tags => [],},
   ), 1, 'an already-cached event id returns early';
 
   my $viewless = _server();
@@ -1621,6 +1623,18 @@ subtest 'disconnects, drains, and request guards' => sub {
     qr/method\ is\ required/mxs, 'a reference method croaks';
 
   is $server->_accept_client, 1, 'accepting without a listener is a no-op';
+};
+
+subtest 'snapshot trust pins must be explicit public keys' => sub {
+  my $normalize = \&Overnet::Program::IRC::Server::_normalized_runtime_adapter_config;
+  for my $pins ([], ['a' x 64], ['a' x 64, 'b' x 64]) {
+    is $normalize->({adapter_config => {snapshot_pubkeys => $pins}})->{snapshot_pubkeys},
+      $pins, 'valid explicit trust pins are retained';
+  }
+  for my $pins (undef, {}, 'a' x 64, [undef], [{}], ['A' x 64], ['short']) {
+    like dies { $normalize->({adapter_config => {snapshot_pubkeys => $pins}}) },
+      qr/snapshot_pubkeys/, 'malformed trust pins fail before the server starts';
+  }
 };
 
 done_testing;

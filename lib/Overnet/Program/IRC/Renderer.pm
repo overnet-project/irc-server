@@ -1,15 +1,90 @@
 package Overnet::Program::IRC::Renderer;
 
 use strictures 2;
+use English qw(-no_match_vars);
 
 our $VERSION = '0.001';
+
+sub rendering_failure {
+  warn "IRC rendering rejected an invalid field\n";
+  return;
+}
+
+sub middle_is_valid {
+  my ($value) = @_;
+  return
+       defined($value)
+    && !ref($value)
+    && length($value)
+    && $value !~ /[\x00-\x20\x7f]/mxs
+    && $value !~ /\A:/mxs;
+}
+
+sub text_is_valid {
+  my ($value) = @_;
+  return defined($value) && !ref($value) && $value !~ /[\x00\r\n]/mxs;
+}
+
+sub format_line {
+  my ($format, @values) = @_;
+  my $trailing   = index($format, ' :');
+  my $prefix_end = index($format, q{ });
+  my $index      = 0;
+  while ($format =~ /%([sd])/gmxs) {
+    my $position   = $LAST_MATCH_START[0];
+    my $conversion = $1;
+    my $value      = $values[$index++];
+    my $valid      = $trailing >= 0 && $position > $trailing ? text_is_valid($value) : middle_is_valid($value);
+    if ($conversion eq 'd') {
+      $valid &&= $value =~ /\A[0-9]+\z/mxs;
+    }
+    if ($position < $prefix_end) {
+      $valid &&= $value !~ /[!\@:]/mxs;
+    }
+    return rendering_failure() if !$valid;
+  }
+  return rendering_failure() if $index != @values;
+  my $line = sprintf($format, @values);
+  return line_is_valid($line) ? $line : rendering_failure();
+}
+
+sub line_is_valid {
+  my ($line) = @_;
+  return 0 if !text_is_valid($line) || !length($line);
+
+  # A final framing check also covers callers forwarding complete lines.
+  my $middle  = qr/[^ :\x00-\x1f\x7f][^ \x00-\x1f\x7f]*/mxs;
+  my $tags    = qr/[^ \x00-\x1f\x7f]+/mxs;
+  my $prefix  = qr/(?:\@$tags\x20)?(?::$middle\x20)?/mxs;
+  my $command = qr/(?:[A-Za-z]+|[0-9]{3})/mxs;
+  return $line =~ /\A$prefix$command(?:\x20$middle)*(?:\x20:[^\x00\r\n]*)?\z/mxs ? 1 : 0;
+}
+
+sub append_reason {
+  my ($line, $reason) = @_;
+  return                     if !defined $line;
+  return rendering_failure() if defined($reason) && !text_is_valid($reason);
+  return $line               if !defined($reason) || !length($reason);
+  return $line . ' :' . $reason;
+}
+
+sub append_parameters {
+  my ($line, @parameters) = @_;
+  return if !defined $line;
+  for my $parameter (@parameters) {
+    return rendering_failure() if !middle_is_valid($parameter);
+  }
+  return join q{ }, $line, @parameters;
+}
 
 sub authenticate_payload_lines {
   my (%args) = @_;
   my $remaining = defined($args{payload}) ? $args{payload} : q{};
   my @lines;
 
-  while (length($remaining) > 400) {
+  return [] if !text_is_valid($remaining) || $remaining =~ /[^A-Za-z0-9+\/=]/mxs;
+
+  while (length($remaining) >= 400) {
     push @lines, 'AUTHENTICATE ' . substr($remaining, 0, 400, q{});
   }
 
@@ -24,46 +99,51 @@ sub authenticate_payload_lines {
 
 sub sasl_success_line {
   my (%args) = @_;
-  return sprintf(':%s 903 %s :SASL authentication successful', $args{server_name}, $args{nick},);
+  return format_line(':%s 903 %s :SASL authentication successful', $args{server_name}, $args{nick},);
 }
 
 sub sasl_fail_line {
   my (%args) = @_;
-  return sprintf(':%s 904 %s :SASL authentication failed', $args{server_name}, $args{nick},);
+  return format_line(':%s 904 %s :SASL authentication failed', $args{server_name}, $args{nick},);
 }
 
 sub unknown_command_line {
   my (%args) = @_;
-  return sprintf(':%s 421 %s %s :Unknown command', $args{server_name}, $args{nick}, $args{command},);
+  return format_line(':%s 421 %s %s :Unknown command', $args{server_name}, $args{nick}, $args{command},);
 }
 
 sub registration_prelude_lines {
   my (%args) = @_;
+  return [] if !defined $args{isupport_tokens};
+  my $support = append_parameters(
+    format_line(':%s 005 %s', $args{server_name}, $args{nick}),
+    split(/\x20/mxs, $args{isupport_tokens}, -1),
+  );
   return [
-    sprintf(':%s 001 %s :Welcome to Overnet IRC',          $args{server_name}, $args{nick},),
-    sprintf(':%s 005 %s %s :are supported by this server', $args{server_name}, $args{nick}, $args{isupport_tokens},),
-    sprintf(':%s 422 %s :MOTD File is missing',            $args{server_name}, $args{nick},),
+    format_line(':%s 001 %s :Welcome to Overnet IRC', $args{server_name}, $args{nick},),
+    append_reason($support, 'are supported by this server'),
+    format_line(':%s 422 %s :MOTD File is missing', $args{server_name}, $args{nick},),
   ];
 }
 
 sub nonickname_given_line {
   my (%args) = @_;
-  return sprintf(':%s 431 %s :No nickname given', $args{server_name}, $args{nick},);
+  return format_line(':%s 431 %s :No nickname given', $args{server_name}, $args{nick},);
 }
 
 sub not_registered_line {
   my (%args) = @_;
-  return sprintf(':%s 451 * :You have not registered', $args{server_name},);
+  return format_line(':%s 451 * :You have not registered', $args{server_name},);
 }
 
 sub need_more_params_line {
   my (%args) = @_;
-  return sprintf(':%s 461 %s %s :Not enough parameters', $args{server_name}, $args{nick}, $args{command},);
+  return format_line(':%s 461 %s %s :Not enough parameters', $args{server_name}, $args{nick}, $args{command},);
 }
 
 sub server_notice_line {
   my (%args) = @_;
-  return sprintf(':%s NOTICE %s :%s', $args{server_name}, $args{nick}, $args{text},);
+  return format_line(':%s NOTICE %s :%s', $args{server_name}, $args{nick}, $args{text},);
 }
 
 sub account_notify_line {
@@ -74,32 +154,32 @@ sub account_notify_line {
     && length($args{account})
     ? $args{account}
     : q{*};
-  return sprintf(':%s!%s@%s ACCOUNT %s', $args{nick}, $args{username}, $args{host}, $account,);
+  return format_line(':%s!%s@%s ACCOUNT %s', $args{nick}, $args{username}, $args{host}, $account,);
 }
 
 sub no_such_nick_line {
   my (%args) = @_;
-  return sprintf(':%s 401 %s %s :No such nick/channel', $args{server_name}, $args{nick}, $args{target_nick},);
+  return format_line(':%s 401 %s %s :No such nick/channel', $args{server_name}, $args{nick}, $args{target_nick},);
 }
 
 sub no_such_channel_line {
   my (%args) = @_;
-  return sprintf(':%s 403 %s %s :No such channel', $args{server_name}, $args{nick}, $args{channel},);
+  return format_line(':%s 403 %s %s :No such channel', $args{server_name}, $args{nick}, $args{channel},);
 }
 
 sub not_on_channel_line {
   my (%args) = @_;
-  return sprintf(':%s 442 %s %s :You\'re not on that channel', $args{server_name}, $args{nick}, $args{channel},);
+  return format_line(':%s 442 %s %s :You\'re not on that channel', $args{server_name}, $args{nick}, $args{channel},);
 }
 
 sub cannot_send_to_channel_line {
   my (%args) = @_;
-  return sprintf(':%s 404 %s %s :Cannot send to channel', $args{server_name}, $args{nick}, $args{channel},);
+  return format_line(':%s 404 %s %s :Cannot send to channel', $args{server_name}, $args{nick}, $args{channel},);
 }
 
 sub chan_op_privs_needed_line {
   my (%args) = @_;
-  return sprintf(':%s 482 %s %s :You\'re not channel operator', $args{server_name}, $args{nick}, $args{channel},);
+  return format_line(':%s 482 %s %s :You\'re not channel operator', $args{server_name}, $args{nick}, $args{channel},);
 }
 
 sub cannot_join_channel_line {
@@ -122,34 +202,36 @@ sub cannot_join_channel_line {
     $reason .= ' (' . $args{reason} . ')';
   }
 
-  return sprintf(':%s %d %s %s :%s', $args{server_name}, $numeric, $args{nick}, $args{channel}, $reason,);
+  return format_line(':%s %d %s %s :%s', $args{server_name}, $numeric, $args{nick}, $args{channel}, $reason,);
 }
 
 sub ban_list_entry_line {
   my (%args) = @_;
-  return sprintf(':%s 367 %s %s %s %s 0',
+  return format_line(':%s 367 %s %s %s %s 0',
     $args{server_name}, $args{nick}, $args{channel}, $args{ban_mask}, $args{server_name},);
 }
 
 sub end_of_ban_list_line {
   my (%args) = @_;
-  return sprintf(':%s 368 %s %s :End of channel ban list', $args{server_name}, $args{nick}, $args{channel},);
+  return format_line(':%s 368 %s %s :End of channel ban list', $args{server_name}, $args{nick}, $args{channel},);
 }
 
 sub exception_list_entry_line {
   my (%args) = @_;
-  return sprintf(':%s 348 %s %s %s %s 0',
-    $args{server_name}, $args{nick}, $args{channel}, $args{exception_mask}, $args{server_name},);
+  return format_line(
+    ':%s 348 %s %s %s %s 0', $args{server_name},    $args{nick},
+    $args{channel},          $args{exception_mask}, $args{server_name},
+  );
 }
 
 sub end_of_exception_list_line {
   my (%args) = @_;
-  return sprintf(':%s 349 %s %s :End of channel exception list', $args{server_name}, $args{nick}, $args{channel},);
+  return format_line(':%s 349 %s %s :End of channel exception list', $args{server_name}, $args{nick}, $args{channel},);
 }
 
 sub invite_exception_list_entry_line {
   my (%args) = @_;
-  return sprintf(
+  return format_line(
     ':%s 346 %s %s %s %s 0',
     $args{server_name}, $args{nick}, $args{channel}, $args{invite_exception_mask},
     $args{server_name},
@@ -158,29 +240,30 @@ sub invite_exception_list_entry_line {
 
 sub end_of_invite_exception_list_line {
   my (%args) = @_;
-  return
-    sprintf(':%s 347 %s %s :End of channel invite exception list', $args{server_name}, $args{nick}, $args{channel},);
+  return format_line(':%s 347 %s %s :End of channel invite exception list', $args{server_name}, $args{nick},
+    $args{channel},);
 }
 
 sub inviting_line {
   my (%args) = @_;
-  return sprintf(':%s 341 %s %s %s', $args{server_name}, $args{nick}, $args{target_nick}, $args{channel},);
+  return format_line(':%s 341 %s %s %s', $args{server_name}, $args{nick}, $args{target_nick}, $args{channel},);
 }
 
 sub authoritative_invite_list_entry_line {
   my (%args) = @_;
-  return sprintf(':%s 336 %s %s %s %s',
+  return format_line(':%s 336 %s %s %s %s',
     $args{server_name}, $args{nick}, $args{channel}, $args{target_pubkey}, $args{invite_code},);
 }
 
 sub end_of_authoritative_invite_list_line {
   my (%args) = @_;
-  return sprintf(':%s 337 %s %s :End of authoritative invite list', $args{server_name}, $args{nick}, $args{channel},);
+  return format_line(':%s 337 %s %s :End of authoritative invite list', $args{server_name}, $args{nick},
+    $args{channel},);
 }
 
 sub authoritative_join_request_list_entry_line {
   my (%args) = @_;
-  return sprintf(
+  return format_line(
     ':%s 338 %s %s %s %s',
     $args{server_name}, $args{nick}, $args{channel}, $args{requester_pubkey},
     (defined($args{actor_mask}) && length($args{actor_mask}) ? $args{actor_mask} : q{*}),
@@ -189,69 +272,73 @@ sub authoritative_join_request_list_entry_line {
 
 sub end_of_authoritative_join_request_list_line {
   my (%args) = @_;
-  return
-    sprintf(':%s 339 %s %s :End of authoritative join request list', $args{server_name}, $args{nick}, $args{channel},);
+  return format_line(':%s 339 %s %s :End of authoritative join request list',
+    $args{server_name}, $args{nick}, $args{channel},);
 }
 
 sub channel_mode_is_line {
   my (%args) = @_;
-  my $suffix = join q{ }, grep { defined && !ref && length } @{$args{mode_args} || []};
-  return sprintf(
-    ':%s 324 %s %s %s%s',
-    $args{server_name}, $args{nick}, $args{channel}, $args{channel_modes}, (length($suffix) ? q{ } . $suffix : q{}),
+  return append_parameters(
+    format_line(':%s 324 %s %s %s', $args{server_name}, $args{nick}, $args{channel}, $args{channel_modes}),
+    @{$args{mode_args} || []},
   );
 }
 
 sub user_mode_is_line {
   my (%args) = @_;
-  return sprintf(':%s 221 %s +', $args{server_name}, $args{nick},);
+  return format_line(':%s 221 %s +', $args{server_name}, $args{nick},);
 }
 
 sub lusers_reply_lines {
   my (%args) = @_;
   return [
-    sprintf(
+    format_line(
       ':%s 251 %s :There are %d users and 0 services on 1 server',
       $args{server_name}, $args{nick}, $args{registered_users},
     ),
-    sprintf(':%s 252 %s 0 :operator(s) online',           $args{server_name}, $args{nick},),
-    sprintf(':%s 253 %s 0 :unknown connection(s)',        $args{server_name}, $args{nick},),
-    sprintf(':%s 254 %s %d :channels formed',             $args{server_name}, $args{nick}, $args{channels},),
-    sprintf(':%s 255 %s :I have %d clients and 1 server', $args{server_name}, $args{nick}, $args{connected_clients},),
+    format_line(':%s 252 %s 0 :operator(s) online',    $args{server_name}, $args{nick},),
+    format_line(':%s 253 %s 0 :unknown connection(s)', $args{server_name}, $args{nick},),
+    format_line(':%s 254 %s %d :channels formed',      $args{server_name}, $args{nick}, $args{channels},),
+    format_line(
+      ':%s 255 %s :I have %d clients and 1 server',
+      $args{server_name}, $args{nick}, $args{connected_clients},
+    ),
   ];
 }
 
 sub list_reply_lines {
   my (%args) = @_;
-  my @lines = (sprintf(':%s 321 %s Channel :Users Name', $args{server_name}, $args{nick},),);
+  my @lines = (format_line(':%s 321 %s Channel :Users Name', $args{server_name}, $args{nick},),);
 
   for my $entry (@{$args{entries} || []}) {
     push @lines,
-      sprintf(
-      ':%s 322 %s %s %d :%s',
-      $args{server_name}, $args{nick}, $entry->{channel}, $entry->{visible_users},
-      $entry->{topic},
+      format_line(
+      ':%s 322 %s %s %d :%s', $args{server_name},      $args{nick},
+      $entry->{channel},      $entry->{visible_users}, $entry->{topic},
       );
   }
 
-  push @lines, sprintf(':%s 323 %s :End of /LIST', $args{server_name}, $args{nick},);
+  push @lines, format_line(':%s 323 %s :End of /LIST', $args{server_name}, $args{nick},);
 
   return \@lines;
 }
 
 sub topic_is_line {
   my (%args) = @_;
-  return sprintf(':%s 332 %s %s :%s', $args{server_name}, $args{nick}, $args{channel}, $args{topic},);
+  return format_line(':%s 332 %s %s :%s', $args{server_name}, $args{nick}, $args{channel}, $args{topic},);
 }
 
 sub no_topic_line {
   my (%args) = @_;
-  return sprintf(':%s 331 %s %s :No topic is set', $args{server_name}, $args{nick}, $args{channel},);
+  return format_line(':%s 331 %s %s :No topic is set', $args{server_name}, $args{nick}, $args{channel},);
 }
 
 sub userhost_line {
   my (%args) = @_;
-  return sprintf(':%s 302 %s :%s', $args{server_name}, $args{nick}, join(q{ }, @{$args{entries} || []}),);
+  for my $entry (@{$args{entries} || []}) {
+    return rendering_failure() if !middle_is_valid($entry);
+  }
+  return format_line(':%s 302 %s :%s', $args{server_name}, $args{nick}, join(q{ }, @{$args{entries} || []}),);
 }
 
 sub who_list_lines {
@@ -260,14 +347,14 @@ sub who_list_lines {
 
   for my $entry (@{$args{entries} || []}) {
     push @lines,
-      sprintf(
-      ':%s 352 %s %s %s %s %s %s H :0 %s',
-      $args{server_name}, $args{nick},        $args{channel}, $entry->{username},
-      $entry->{host},     $args{server_name}, $entry->{nick}, $entry->{realname},
+      format_line(
+      ':%s 352 %s %s %s %s %s %s H :0 %s', $args{server_name}, $args{nick},
+      $args{channel},                      $entry->{username}, $entry->{host},
+      $args{server_name},                  $entry->{nick},     $entry->{realname},
       );
   }
 
-  push @lines, sprintf(':%s 315 %s %s :End of /WHO list.', $args{server_name}, $args{nick}, $args{channel},);
+  push @lines, format_line(':%s 315 %s %s :End of /WHO list.', $args{server_name}, $args{nick}, $args{channel},);
 
   return \@lines;
 }
@@ -276,9 +363,9 @@ sub whois_reply_lines {
   my (%args) = @_;
   my $entry  = $args{entry} || {};
   my @lines  = (
-    sprintf(
-      ':%s 311 %s %s %s %s * :%s',
-      $args{server_name}, $args{nick}, $entry->{nick}, $entry->{username}, $entry->{host}, $entry->{realname},
+    format_line(
+      ':%s 311 %s %s %s %s * :%s', $args{server_name}, $args{nick}, $entry->{nick},
+      $entry->{username},          $entry->{host},     $entry->{realname},
     ),
   );
 
@@ -286,29 +373,40 @@ sub whois_reply_lines {
     && !ref($entry->{account})
     && length($entry->{account})) {
     push @lines,
-      sprintf(':%s 330 %s %s %s :is logged in as', $args{server_name}, $args{nick}, $entry->{nick}, $entry->{account},);
+      format_line(':%s 330 %s %s %s :is logged in as',
+      $args{server_name}, $args{nick}, $entry->{nick}, $entry->{account},);
   }
 
   push @lines,
-    sprintf(
+    format_line(
     ':%s 312 %s %s %s :%s',
     $args{server_name}, $args{nick}, $entry->{nick}, $args{server_name}, $args{server_description},
     ),
-    sprintf(':%s 318 %s %s :End of /WHOIS list.', $args{server_name}, $args{nick}, $entry->{nick},);
+    format_line(':%s 318 %s %s :End of /WHOIS list.', $args{server_name}, $args{nick}, $entry->{nick},);
 
   return \@lines;
 }
 
 sub nick_in_use_line {
   my (%args) = @_;
-  return sprintf(':%s 433 %s %s :Nickname is already in use', $args{server_name}, $args{nick}, $args{attempted_nick},);
+  return format_line(':%s 433 %s %s :Nickname is already in use', $args{server_name}, $args{nick},
+    $args{attempted_nick},);
 }
 
 sub names_list_lines {
   my (%args) = @_;
+  for my $name (@{$args{names} || []}) {
+    if (!middle_is_valid($name) || $name =~ /[!:]/mxs || substr($name, 1) =~ /@/mxs) {
+      rendering_failure();
+      return [];
+    }
+  }
   return [
-    sprintf(':%s 353 %s = %s :%s', $args{server_name}, $args{nick}, $args{channel}, join(q{ }, @{$args{names} || []}),),
-    sprintf(':%s 366 %s %s :End of /NAMES list.', $args{server_name}, $args{nick}, $args{channel},),
+    format_line(
+      ':%s 353 %s = %s :%s',
+      $args{server_name}, $args{nick}, $args{channel}, join(q{ }, @{$args{names} || []}),
+    ),
+    format_line(':%s 366 %s %s :End of /NAMES list.', $args{server_name}, $args{nick}, $args{channel},),
   ];
 }
 
@@ -332,6 +430,28 @@ Version 0.001.
   my $line = Overnet::Program::IRC::Renderer::server_notice_line(%args);
 
 =head1 SUBROUTINES/METHODS
+
+=head2 format_line
+
+Checks each field against its position in a literal IRC format before combining
+fields. Only C<%s> and C<%d> substitutions are supported. The result has no CRLF;
+the socket writer adds exactly one terminator after checking the whole line.
+Invalid fields produce no line and a diagnostic that contains no message text.
+
+=head2 middle_is_valid
+
+=head2 text_is_valid
+
+=head2 line_is_valid
+
+=head2 rendering_failure
+
+=head2 append_reason
+
+=head2 append_parameters
+
+These helpers validate IRC fields and construct optional parameters without
+allowing a value to supply IRC framing.
 
 =head2 authenticate_payload_lines
 
@@ -411,7 +531,7 @@ Version 0.001.
 
 =head1 DIAGNOSTICS
 
-Renderer helpers do not emit diagnostics directly.
+Invalid fields produce a diagnostic without including their contents.
 
 =head1 CONFIGURATION AND ENVIRONMENT
 

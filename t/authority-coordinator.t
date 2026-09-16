@@ -201,10 +201,11 @@ subtest 'read_nostr_subscription_snapshot guards its inputs' => sub {
   my $events = _coordinator($server)->read_nostr_subscription_snapshot('sub-1', refresh => 1,);
   is scalar(@{$events}), 1, 'snapshot events are returned';
   my ($read) = grep { $_->{method} eq 'nostr.read_subscription_snapshot' } @{$server->requests};
-  is $read->{params}{refresh}, 1, 'the refresh flag is forwarded';
+  is JSON::encode_json($read->{params}{refresh}), 'true', 'the refresh flag is a JSON boolean';
 
   is _coordinator($server)->read_nostr_subscription_snapshot('sub-1', refresh => 0,),
-    [_group_event()], 'a false refresh flag is forwarded as zero';
+    [_group_event()], 'a false refresh flag still reads the snapshot';
+  is JSON::encode_json($server->requests->[-1]{params}{refresh}), 'false', 'false is also a JSON boolean';
 
   my $failing = _server();
   $failing->request_handler(sub { die "runtime gone\n" });
@@ -254,7 +255,7 @@ subtest 'event merging and discovery bucketing skip malformed input' => sub {
   delete $unidentified->{id};
   my $merged = _coordinator($server)
     ->_merge_authoritative_events('not-a-list', [_group_event(), 'not-a-hash', $unidentified, _group_event(),],);
-  is scalar(@{$merged}), 2, 'non-lists, non-hashes, and duplicates are dropped while unidentified events stay';
+  is scalar(@{$merged}), 1, 'malformed and unidentified events and duplicate IDs are dropped';
 
   my $count =
     _coordinator($server)
@@ -564,12 +565,13 @@ subtest 'publish_authoritative_nip29_event covers relay publishing' => sub {
   my $key    = Overnet::Core::Nostr->generate_key;
   my $client = $server->add_client(
     1,
-    nick                        => 'alice',
-    username                    => 'alice',
-    registered                  => 1,
-    authority_pubkey            => 'a' x 64,
-    authority_delegate_key      => $key,
-    authority_delegate_event_id => 'b' x 64,
+    nick                          => 'alice',
+    username                      => 'alice',
+    registered                    => 1,
+    authority_pubkey              => 'a' x 64,
+    authority_delegate_key        => $key,
+    authority_delegate_event_id   => 'b' x 64,
+    authority_delegate_expires_at => time + 600,
   );
   my $draft = {
     kind       => 9021,
@@ -605,9 +607,10 @@ subtest 'publish_authoritative_nip29_event covers relay publishing' => sub {
   my $suppressing       = _server();
   my $suppressed_client = $suppressing->add_client(
     1,
-    nick                        => 'alice',
-    authority_delegate_key      => $key,
-    authority_delegate_event_id => 'b' x 64,
+    nick                          => 'alice',
+    authority_delegate_key        => $key,
+    authority_delegate_event_id   => 'b' x 64,
+    authority_delegate_expires_at => time + 600,
   );
   _with_view_handler(
     $suppressing,
@@ -628,9 +631,10 @@ subtest 'publish_authoritative_nip29_event covers relay publishing' => sub {
   my $rejecting       = _server();
   my $rejected_client = $rejecting->add_client(
     1,
-    nick                        => 'alice',
-    authority_delegate_key      => $key,
-    authority_delegate_event_id => 'b' x 64,
+    nick                          => 'alice',
+    authority_delegate_key        => $key,
+    authority_delegate_event_id   => 'b' x 64,
+    authority_delegate_expires_at => time + 600,
   );
   _with_view_handler(
     $rejecting,
@@ -647,9 +651,10 @@ subtest 'publish_authoritative_nip29_event covers relay publishing' => sub {
   my $erroring     = _server();
   my $error_client = $erroring->add_client(
     1,
-    nick                        => 'alice',
-    authority_delegate_key      => $key,
-    authority_delegate_event_id => 'b' x 64,
+    nick                          => 'alice',
+    authority_delegate_key        => $key,
+    authority_delegate_event_id   => 'b' x 64,
+    authority_delegate_expires_at => time + 600,
   );
   _with_view_handler(
     $erroring,
@@ -666,9 +671,10 @@ subtest 'publish_authoritative_nip29_event covers relay publishing' => sub {
   my $unsignable        = _server();
   my $unsignable_client = $unsignable->add_client(
     1,
-    nick                        => 'alice',
-    authority_delegate_key      => $key,
-    authority_delegate_event_id => 'b' x 64,
+    nick                          => 'alice',
+    authority_delegate_key        => $key,
+    authority_delegate_event_id   => 'b' x 64,
+    authority_delegate_expires_at => time + 600,
   );
   my $dying_key = mock 'Overnet::Core::Nostr::Key' => (override => [sign_event_hash => sub { die "no\n" },],);
   is $unsignable->_publish_authoritative_nip29_event(
@@ -882,6 +888,173 @@ subtest 'rendered event ids are capped' => sub {
     for 1 .. 4_096;
   ok !$server->{rendered_subscription_event_ids}{seen}, 'the oldest event id is evicted at the cap';
   is scalar(@{$server->{rendered_subscription_event_id_order}}), 4_096, 'the order queue stays at the cap';
+};
+
+subtest 'snapshot refresh announces new channel transitions before duplicate live delivery' => sub {
+  my $server = _server();
+  $server->add_client(1, registered => 1, nick => 'alice', authority_pubkey => 'a' x 64);
+  $server->add_client(2, registered => 1, nick => 'bob',   authority_pubkey => 'b' x 64);
+  $server->_add_client_to_channel(1, $channel);
+  my @events = (_group_event());
+  $server->request_handler(
+    sub {
+      my (%args) = @_;
+      return {events => [@events]} if $args{method} eq 'nostr.query_events';
+      if ($args{method} eq 'adapters.derive' && $args{params}{operation} eq 'authoritative_channel_view') {
+        my ($present, $banned) = (0, 0);
+        for my $event (@{$args{params}{input}{authoritative_events}}) {
+          $present = 1 if $event->{kind} == 9021;
+          $present = 0 if $event->{kind} == 9022;
+          $banned  = 1 if $event->{kind} == 9002;
+        }
+        return {
+          view => [
+            {
+              members         => [{pubkey => 'a' x 64}, {pubkey => 'b' x 64}],
+              present_members => [{pubkey => 'a' x 64}, ($present ? ({pubkey => 'b' x 64}) : ())],
+              channel_modes   => '+n',
+              ban_masks       => [$banned ? '*!*@banned.test' : ()],
+            }
+          ]
+        };
+      }
+      return;
+    }
+  );
+  $server->_refresh_authoritative_nip29_channel_cache($channel, refresh => 1);
+  is $server->lines_for(1), [], 'initial snapshot establishes the view without replaying history';
+  my $coordinator = _coordinator($server);
+  $server->{authoritative_subscription_channels}{'live-controls'} = $channel;
+  my @expected;
+  my $sequence = 0;
+  for my $case (
+    [9021, 'b', q{},     ":bob JOIN $channel"],
+    [9022, 'b', 'later', ":bob PART $channel :later"],
+    [9002, 'a', q{},     ":alice MODE $channel +b *!*\@banned.test"],
+  ) {
+    my ($kind, $author, $content, $line) = @{$case};
+    my $event = {
+      id         => sprintf('%064x', ++$sequence),
+      kind       => $kind,
+      created_at => 3000 + $sequence,
+      pubkey     => $author x 64,
+      content    => $content,
+      tags       => [['h', $group_id]]
+    };
+    push @events,   $event;
+    push @expected, $line;
+    $server->_refresh_authoritative_nip29_channel_cache($channel, refresh => 1);
+    is $server->lines_for(1), \@expected, 'a snapshot containing a new control announces its transition';
+    $coordinator->handle_nostr_subscription_event({subscription_id => 'live-controls', data => $event});
+    $server->_refresh_authoritative_nip29_channel_cache($channel, refresh => 1);
+    is $server->lines_for(1), \@expected, 'live duplicates and repeated refreshes do not announce it again';
+  }
+};
+
+subtest 'subscription opening consumes controls received in its initial snapshot' => sub {
+  for my $case ([9021, ":bob JOIN $channel"], [9002, ":alice PART $channel :channel deleted"]) {
+    my ($kind, $line) = @{$case};
+    my $server = _server();
+    $server->add_client(1, registered => 1, nick => 'alice', authority_pubkey => 'a' x 64);
+    $server->add_client(2, registered => 1, nick => 'bob',   authority_pubkey => 'b' x 64);
+    $server->_add_client_to_channel(1, $channel);
+    my $initial = _group_event();
+    my $control = {
+      id         => 'f' x 64,
+      kind       => $kind,
+      created_at => 3000,
+      pubkey     => 'b' x 64,
+      content    => q{},
+      tags       => [['h', $group_id]]
+    };
+    $server->request_handler(
+      sub {
+        my (%args) = @_;
+        return {events => [$initial]} if $args{method} eq 'nostr.query_events';
+        if ($args{method} eq 'nostr.open_subscription') {
+          return {events => $args{params}{filters}[0]{kinds}[0] == 39000 ? [$initial] : [$control]};
+        }
+        if ($args{method} eq 'adapters.derive' && $args{params}{operation} eq 'authoritative_channel_view') {
+          my $changed = grep { $_->{id} eq $control->{id} } @{$args{params}{input}{authoritative_events}};
+          return {
+            view => [
+              {
+                members         => [{pubkey => 'a' x 64}, {pubkey => 'b' x 64}],
+                present_members => [{pubkey => 'a' x 64}, ($changed && $kind == 9021 ? ({pubkey => 'b' x 64}) : ())],
+                channel_modes   => '+n',
+                tombstoned      => $changed && $kind == 9002 ? 1 : 0,
+              }
+            ]
+          };
+        }
+        return;
+      }
+    );
+    $server->_refresh_authoritative_nip29_channel_cache($channel, refresh => 1);
+    my $coordinator = _coordinator($server);
+    my $ids         = $coordinator->ensure_authoritative_channel_subscription($channel);
+    is $server->lines_for(1), [$line], 'a control received during subscription setup is applied immediately';
+    $coordinator->ensure_authoritative_channel_subscription($channel);
+    $coordinator->handle_nostr_subscription_event({subscription_id => $ids->[1], data => $control});
+    is $server->lines_for(1), [$line], 'reusing the subscription and duplicate delivery have no second effect';
+  }
+};
+
+subtest 'control rendering refreshes a grant before its notification arrives' => sub {
+  for my $old_nick (undef, 'old-bob') {
+    my $server = _server();
+    $server->add_client(1, registered => 1, nick => 'alice', authority_pubkey => 'a' x 64);
+    $server->_add_client_to_channel(1, $channel);
+    my $grant = {
+      id         => 'd' x 64,
+      pubkey     => 'b' x 64,
+      kind       => 14142,
+      created_at => 3000,
+      content    => q{},
+      tags       => [['relay', 'ws://127.0.0.1:7448'], ['nick', 'bob']]
+    };
+    my $control = {
+      id         => 'f' x 64,
+      pubkey     => 'c' x 64,
+      kind       => 9021,
+      created_at => 3001,
+      content    => q{},
+      tags       => [['h', $group_id], ['overnet_actor', 'b' x 64], ['overnet_authority', $grant->{id}]]
+    };
+    $server->{authoritative_grant_cache} = {
+      events         => [],
+      nick_by_pubkey => {defined($old_nick) ? ('b' x 64 => {nick => $old_nick, created_at => 2000}) : ()}
+    };
+    $server->request_handler(
+      sub {
+        my (%args) = @_;
+        return {events => [_group_event()]} if $args{method} eq 'nostr.query_events';
+        return {events => [$grant]}         if $args{method} eq 'nostr.read_subscription_snapshot';
+        if ($args{method} eq 'adapters.derive' && $args{params}{operation} eq 'authoritative_channel_view') {
+          my $joined = grep { $_->{id} eq $control->{id} } @{$args{params}{input}{authoritative_events}};
+          return {
+            view => [
+              {
+                members         => [{pubkey => 'a' x 64}, {pubkey => 'b' x 64}],
+                present_members => [{pubkey => 'a' x 64}, ($joined ? ({pubkey => 'b' x 64}) : ())],
+                channel_modes   => '+n'
+              }
+            ]
+          };
+        }
+        return;
+      }
+    );
+    $server->_refresh_authoritative_nip29_channel_cache($channel, refresh => 1);
+    $server->{authoritative_subscription_channels}{'control-sub'} = $channel;
+    my $coordinator = _coordinator($server);
+    $coordinator->handle_nostr_subscription_event({subscription_id => 'control-sub', data => $control});
+    is $server->lines_for(1), [":bob JOIN $channel"], 'the referenced grant supplies the current remote nickname';
+    my @reads = grep { $_->{method} eq 'nostr.read_subscription_snapshot' } @{$server->requests};
+    is scalar(@reads), 1, 'the unseen grant is refreshed once';
+    $coordinator->handle_nostr_subscription_event({subscription_id => 'control-sub', data => $control});
+    is $server->lines_for(1), [":bob JOIN $channel"], 'duplicate delivery has no second effect';
+  }
 };
 
 done_testing;

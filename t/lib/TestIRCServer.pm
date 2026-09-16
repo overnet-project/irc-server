@@ -16,7 +16,7 @@ has requests => (
 has request_handler => (
   is      => 'rw',
   default => sub {
-    sub { return }
+    sub {return}
   },
 );
 
@@ -24,10 +24,10 @@ no Moo;
 
 my %DEFAULT_RESPONSES = (
   'nostr.open_subscription'          => sub { return {} },
-  'nostr.read_subscription_snapshot' => sub { return {events => [],} },
-  'nostr.query_events'               => sub { return {events => [],} },
+  'nostr.read_subscription_snapshot' => sub { return {events   => [],} },
+  'nostr.query_events'               => sub { return {events   => [],} },
   'nostr.publish_event'              => sub { return {accepted => 1,} },
-  'events.read'                      => sub { return {entries => [],} },
+  'events.read'                      => sub { return {entries  => [],} },
   'events.append'                    => sub { return {} },
   'subscriptions.open'               => sub { return {} },
   'subscriptions.close'              => sub { return {} },
@@ -35,6 +35,7 @@ my %DEFAULT_RESPONSES = (
 
 sub _send_client_line {
   my ($self, $client_id, $line) = @_;
+  return 0 if !defined $line;
   push @{$self->{sent_lines}}, [$client_id, $line];
   return 1;
 }
@@ -60,6 +61,7 @@ sub configure {
     server_name    => 'irc.example.test',
     adapter_config => {
       authority_profile => 'nip29',
+      snapshot_pubkeys  => [map { $_ x 64 } qw(a b c d e f)],
       group_host        => 'groups.example.test',
       network           => 'overnet',
     },

@@ -1,6 +1,8 @@
 package Overnet::Program::IRC::Server;
 
 use strictures 2;
+use List::Util          qw(any);
+use Overnet::Core::JSON ();
 use Moo;
 use Carp        qw(croak);
 use Digest::SHA qw(sha256_hex hmac_sha256_hex);
@@ -591,6 +593,11 @@ sub _normalized_runtime_adapter_config {
   if (!(ref($adapter_config) eq 'HASH')) {
     croak "config.adapter_config must be an object\n";
   }
+  if (exists $adapter_config->{snapshot_pubkeys}) {
+    my $keys = $adapter_config->{snapshot_pubkeys};
+    croak "config.adapter_config.snapshot_pubkeys must contain lowercase hex pubkeys\n"
+      if ref($keys) ne 'ARRAY' || any { !defined || ref || !/\A[0-9a-f]{64}\z/mxs } @{$keys};
+  }
   return {%{$adapter_config}};
 }
 
@@ -968,7 +975,9 @@ sub _handle_registered_nick_command {
   }
 
   my @shared_client_ids = $self->_shared_client_ids_for_client($client_id);
-  $self->_send_line_to_client_ids(\@shared_client_ids, sprintf(':%s NICK :%s', $old_nick, $new_nick),);
+  $self->_send_line_to_client_ids(\@shared_client_ids,
+    Overnet::Program::IRC::Renderer::format_line(':%s NICK :%s', $old_nick, $new_nick),
+  );
   $self->_rename_client_channels(
     $client,
     old_nick => $old_nick,
@@ -1048,7 +1057,7 @@ sub _handle_user_command {
 sub _handle_ping_command {
   my ($self, $client_id, $params) = @_;
   my $token = defined $params->[0] ? $params->[0] : q{};
-  $self->_send_client_line($client_id, 'PONG :' . $token);
+  $self->_send_client_line($client_id, Overnet::Program::IRC::Renderer::format_line('PONG :%s', $token));
   return 1;
 }
 
@@ -1900,6 +1909,7 @@ sub _default_presentational_host {
 
 sub _isupport_tokens {
   my ($self) = @_;
+  return if !Overnet::Program::IRC::Renderer::middle_is_valid($self->{config}{network});
   return join q{ }, 'CASEMAPPING=rfc1459', 'CHANTYPES=#&', 'NETWORK=' . $self->{config}{network};
 }
 
@@ -2739,15 +2749,10 @@ sub _derive_authoritative_channel_state {
 
 sub _sort_authoritative_events {
   my ($self, $events) = @_;
-  my @decorated;
-  my $index = 0;
-  for my $event (@{$events || []}) {
-    push @decorated, [$index++, $event];
-  }
-  return [
-    map  { $_->[1] }
-    sort { ((($a->[1]{created_at}) || 0) <=> (($b->[1]{created_at}) || 0)) || ($a->[0] <=> $b->[0]) } @decorated
-  ];
+  my $snapshot_pubkeys = $self->{config}{adapter_config}{snapshot_pubkeys} || [];
+  my @trusted = grep { Overnet::Authority::HostedChannel::trusted_snapshot($_, $snapshot_pubkeys) } @{$events || []};
+  return Overnet::Authority::HostedChannel::ordered_events(\@trusted,
+    snapshot_signers => {map { $_ => 1 } @{$snapshot_pubkeys}});
 }
 
 sub _client_authoritative_pubkey {
@@ -2847,7 +2852,7 @@ sub _authoritative_grant_is_expired {
   if (!(defined $expires_at && $expires_at =~ /\A\d+\z/mxs)) {
     return 0;
   }
-  return $expires_at < time() ? 1 : 0;
+  return $expires_at <= time() ? 1 : 0;
 }
 
 sub _hex_pubkey {
@@ -3112,7 +3117,7 @@ sub _authoritative_topic_line_from_view {
       || $prefix;
   }
 
-  return sprintf(':%s TOPIC %s :%s', $prefix, $display_channel, $view->{topic});
+  return Overnet::Program::IRC::Renderer::format_line(':%s TOPIC %s :%s', $prefix, $display_channel, $view->{topic});
 }
 
 sub _sync_authoritative_topic_state_from_view {
@@ -3187,8 +3192,8 @@ sub _apply_authoritative_channel_tombstone {
       && length($client->{nick})
       ? $client->{nick}
       : $self->{config}{server_name};
-    my $line = sprintf(':%s PART %s', $nick, $display_channel);
-    $line .= ' :' . $reason;
+    my $line = Overnet::Program::IRC::Renderer::format_line(':%s PART %s', $nick, $display_channel);
+    $line = Overnet::Program::IRC::Renderer::append_reason($line, $reason);
     $self->_broadcast_channel_line($display_channel, $line);
     $self->_remove_client_from_channel($client_id, $display_channel, nick => $nick,);
   }
@@ -4056,9 +4061,9 @@ sub _handle_authoritative_part_command {
 
   }
 
-  my $line = sprintf(':%s PART %s', $client->{nick}, $channel);
+  my $line = Overnet::Program::IRC::Renderer::format_line(':%s PART %s', $client->{nick}, $channel);
   if (defined $reason && length $reason) {
-    $line .= ' :' . $reason;
+    $line = Overnet::Program::IRC::Renderer::append_reason($line, $reason);
   }
 
   $self->_broadcast_channel_line($channel, $line);
@@ -4117,7 +4122,7 @@ sub _handle_authoritative_topic_command {
   }
 
   if (!$self->_authority_relay_enabled) {
-    my $line = sprintf(':%s TOPIC %s :%s', $client->{nick}, $channel, $text);
+    my $line = Overnet::Program::IRC::Renderer::format_line(':%s TOPIC %s :%s', $client->{nick}, $channel, $text);
     $self->_broadcast_channel_line($channel, $line);
     $self->_channel_state($channel)->{topic_text} = $text;
     $self->_channel_state($channel)->{topic_line} = $line;
@@ -4457,9 +4462,9 @@ sub _authoritative_limit_mode_details {
 
 sub _authoritative_mode_details {
   my ($client, $channel, $mode, $mode_args, $display_arg) = @_;
-  my $mode_line = sprintf(':%s MODE %s %s', $client->{nick}, $channel, $mode);
+  my $mode_line = Overnet::Program::IRC::Renderer::format_line(':%s MODE %s %s', $client->{nick}, $channel, $mode);
   if (defined $display_arg) {
-    $mode_line .= q{ } . $display_arg;
+    $mode_line = Overnet::Program::IRC::Renderer::append_parameters($mode_line, $display_arg);
   }
   return {
     mode_args => $mode_args,
@@ -4604,9 +4609,9 @@ sub _handle_authoritative_kick_command {
 
   }
 
-  my $line = sprintf(':%s KICK %s %s', $client->{nick}, $channel, $target_nick);
+  my $line = Overnet::Program::IRC::Renderer::format_line(':%s KICK %s %s', $client->{nick}, $channel, $target_nick);
   if (defined $reason && length $reason) {
-    $line .= ' :' . $reason;
+    $line = Overnet::Program::IRC::Renderer::append_reason($line, $reason);
   }
 
   $self->_broadcast_channel_line($channel, $line);
@@ -4687,7 +4692,8 @@ sub _handle_authoritative_invite_command {
   $self->_send_inviting($client_id, $target_nick, $channel);
   $target_client->{authority_seen_invites}{$channel}{$invite_code} = 1;
   $self->_send_client_line($target_client->{id},
-    sprintf(':%s INVITE %s :%s', $client->{nick}, $target_nick, $channel),);
+    Overnet::Program::IRC::Renderer::format_line(':%s INVITE %s :%s', $client->{nick}, $target_nick, $channel),
+  );
   return 1;
 }
 
@@ -4902,9 +4908,8 @@ sub _client_has_authoritative_delegation {
     return 0;
   }
 
-  return 0
-    if defined $client->{authority_delegate_expires_at}
-    && $client->{authority_delegate_expires_at} < time();
+  my $expiry = $client->{authority_delegate_expires_at};
+  return 0 if !defined($expiry) || ref($expiry) || $expiry !~ /\A[0-9]+\z/mxs || $expiry <= time();
   return 1;
 }
 
@@ -4970,7 +4975,7 @@ sub _is_authoritative_nip29_event {
   }
 
   my $kind = $event->{kind};
-  if (!(defined $kind && !ref($kind))) {
+  if (!(defined $kind && !ref($kind) && $kind =~ /\A[0-9]+\z/mxs)) {
     return 0;
   }
 
@@ -4996,8 +5001,9 @@ sub _is_authoritative_nip29_event {
     return 0;
   }
 
-  my %tags = $self->_first_tag_values($event->{tags});
-  if (!(defined $tags{h} && $tags{h} eq $group_id)) {
+  my %tags    = $self->_first_tag_values($event->{tags});
+  my $binding = $kind >= 39_000 ? $tags{d} : $tags{h};
+  if (!(defined $binding && $binding eq $group_id)) {
     return 0;
   }
 
@@ -5190,8 +5196,12 @@ sub _broadcast_authoritative_mode_flag_updates {
       next;
     }
 
-    $self->_broadcast_channel_line($channel,
-      sprintf(':%s MODE %s %s%s', $actor_nick, $channel, $new_mode_flags{$mode_letter} ? q{+} : q{-}, $mode_letter,),
+    $self->_broadcast_channel_line(
+      $channel,
+      Overnet::Program::IRC::Renderer::format_line(
+        ':%s MODE %s %s%s',
+        $actor_nick, $channel, $new_mode_flags{$mode_letter} ? q{+} : q{-}, $mode_letter,
+      ),
     );
   }
   return 1;
@@ -5219,13 +5229,17 @@ sub _broadcast_authoritative_ban_mask_updates {
     if ($old_ban_masks{$ban_mask}) {
       next;
     }
-    $self->_broadcast_channel_line($channel, sprintf(':%s MODE %s +b %s', $actor_nick, $channel, $ban_mask),);
+    $self->_broadcast_channel_line($channel,
+      Overnet::Program::IRC::Renderer::format_line(':%s MODE %s +b %s', $actor_nick, $channel, $ban_mask),
+    );
   }
   for my $ban_mask (sort keys %old_ban_masks) {
     if ($new_ban_masks{$ban_mask}) {
       next;
     }
-    $self->_broadcast_channel_line($channel, sprintf(':%s MODE %s -b %s', $actor_nick, $channel, $ban_mask),);
+    $self->_broadcast_channel_line($channel,
+      Overnet::Program::IRC::Renderer::format_line(':%s MODE %s -b %s', $actor_nick, $channel, $ban_mask),
+    );
   }
   return 1;
 }
@@ -5278,7 +5292,9 @@ sub _send_authoritative_pending_invite_to_client {
     return 1;
   }
 
-  $self->_send_client_line($client_id, sprintf(':%s INVITE %s :%s', $actor_nick, $client->{nick}, $channel),);
+  $self->_send_client_line($client_id,
+    Overnet::Program::IRC::Renderer::format_line(':%s INVITE %s :%s', $actor_nick, $client->{nick}, $channel),
+  );
   return 1;
 }
 
@@ -5325,7 +5341,9 @@ sub _broadcast_authoritative_join_updates {
 
     my $actor_nick = $self->_authoritative_nick_for_pubkey($pubkey)
       || $self->{config}{server_name};
-    $self->_broadcast_channel_line($channel, sprintf(':%s JOIN %s', $actor_nick, $channel),);
+    $self->_broadcast_channel_line($channel,
+      Overnet::Program::IRC::Renderer::format_line(':%s JOIN %s', $actor_nick, $channel),
+    );
   }
   return 1;
 }
@@ -5392,7 +5410,11 @@ sub _broadcast_authoritative_kick_update {
     return 1;
   }
 
-  my $line = sprintf(':%s KICK %s %s', $self->_authoritative_event_actor_nick($event), $channel, $target_nick);
+  my $line = Overnet::Program::IRC::Renderer::format_line(
+    ':%s KICK %s %s',
+    $self->_authoritative_event_actor_nick($event),
+    $channel, $target_nick
+  );
   $line = _line_with_reason($line, $event->{content});
   $self->_broadcast_channel_line($channel, $line);
   $self->_remove_authoritative_affected_clients($channel, $affected_client_ids);
@@ -5410,7 +5432,7 @@ sub _broadcast_authoritative_part_update {
     ? $self->{clients}{$affected_client_ids->[0]}{nick}
     : (  $self->_authoritative_nick_for_pubkey($pubkey)
       || $self->{config}{server_name});
-  my $line = sprintf(':%s PART %s', $actor_nick, $channel);
+  my $line = Overnet::Program::IRC::Renderer::format_line(':%s PART %s', $actor_nick, $channel);
   $line = _line_with_reason($line, $event->{content});
   $self->_broadcast_channel_line($channel, $line);
   $self->_remove_authoritative_affected_clients($channel, $affected_client_ids);
@@ -5427,10 +5449,7 @@ sub _authoritative_target_nick {
 
 sub _line_with_reason {
   my ($line, $reason) = @_;
-  if (defined $reason && !ref($reason) && length($reason)) {
-    $line .= ' :' . $reason;
-  }
-  return $line;
+  return Overnet::Program::IRC::Renderer::append_reason($line, $reason);
 }
 
 sub _remove_authoritative_affected_clients {
@@ -5504,6 +5523,17 @@ sub _update_authoritative_channel_cache_with_event {
       state        => $new_state,
       refreshed_at => time(),
     };
+  }
+
+  # Controls and grants use separate subscriptions. Resolve a new grant before
+  # rendering its actor, even if the grant notification is still queued.
+  my %event_tags = $self->_first_tag_values($event->{tags});
+  my $grant_id   = $event_tags{overnet_authority};
+  if ($self->_authority_relay_enabled && defined($grant_id)) {
+    my $known_grant = grep { ($_->{id} // q{}) eq $grant_id } @{$self->_read_authoritative_grant_events};
+    if (!$known_grant) {
+      $self->_read_authoritative_grant_events(force => 1);
+    }
   }
 
   $self->_sync_authoritative_topic_state_from_view($canonical, $new_cache->{view});
@@ -6031,9 +6061,9 @@ sub _disconnect_client {
 
   my @channels = sort values %{$client->{joined_channels} || {}};
   if ($args{emit_quit}) {
-    my $line = sprintf(':%s QUIT', $client->{nick});
+    my $line = Overnet::Program::IRC::Renderer::format_line(':%s QUIT', $client->{nick});
     if (defined $args{reason} && length $args{reason}) {
-      $line .= ' :' . $args{reason};
+      $line = Overnet::Program::IRC::Renderer::append_reason($line, $args{reason});
     }
     $self->_send_line_to_client_ids(
       [
@@ -6149,7 +6179,7 @@ sub _subscription_event_context {
   }
 
   my %tags    = $self->_first_tag_values($event->tags);
-  my $content = eval { JSON::decode_json($event->content) };
+  my $content = eval { Overnet::Core::JSON::decode_json($event->content) };
   if (!(ref($content) eq 'HASH')) {
     return;
   }
@@ -6194,6 +6224,9 @@ sub _render_channel_subscription_item {
 
 sub _channel_subscription_line {
   my ($self, $item_type, $event_type, $channel, $nick, $body) = @_;
+  if (!$self->_is_nick_name($nick)) {
+    return Overnet::Program::IRC::Renderer::rendering_failure();
+  }
   my %builders;
   $builders{'event:chat.message'} = sub {
     return _channel_text_line('PRIVMSG', $nick, $channel, $body->{text});
@@ -6206,15 +6239,16 @@ sub _channel_subscription_line {
   };
   $builders{'event:chat.join'} = sub {
     $self->_add_visible_nick($channel, $nick);
-    return sprintf(':%s JOIN %s', $nick, $channel);
+    return Overnet::Program::IRC::Renderer::format_line(':%s JOIN %s', $nick, $channel);
   };
   $builders{'event:chat.part'} = sub {
     $self->_remove_visible_nick($channel, $nick);
-    return _line_with_reason(sprintf(':%s PART %s', $nick, $channel), $body->{reason});
+    return _line_with_reason(Overnet::Program::IRC::Renderer::format_line(':%s PART %s', $nick, $channel),
+      $body->{reason});
   };
   $builders{'event:chat.quit'} = sub {
     $self->_remove_visible_nick($channel, $nick);
-    return _line_with_reason(sprintf(':%s QUIT', $nick), $body->{reason});
+    return _line_with_reason(Overnet::Program::IRC::Renderer::format_line(':%s QUIT', $nick), $body->{reason});
   };
 
   my $builder = $builders{"$item_type:$event_type"};
@@ -6229,7 +6263,7 @@ sub _channel_text_line {
   if (!(defined $text && !ref($text))) {
     return;
   }
-  return sprintf(':%s %s %s :%s', $nick, $command, $channel, $text);
+  return Overnet::Program::IRC::Renderer::format_line(':%s %s %s :%s', $nick, $command, $channel, $text);
 }
 
 sub _channel_topic_subscription_line {
@@ -6237,7 +6271,7 @@ sub _channel_topic_subscription_line {
   if (!(defined $topic && !ref($topic))) {
     return;
   }
-  my $line = sprintf(':%s TOPIC %s :%s', $nick, $channel, $topic);
+  my $line = Overnet::Program::IRC::Renderer::format_line(':%s TOPIC %s :%s', $nick, $channel, $topic);
   $self->_channel_state($channel)->{topic_line} = $line;
   $self->_channel_state($channel)->{topic_text} = $topic;
   return $line;
@@ -6260,8 +6294,12 @@ sub _render_network_nick_subscription_item {
   }
 
   my $body = $context->{body};
-  if ( !_nonempty_scalar($body->{old_nick})
-    || !_nonempty_scalar($body->{new_nick})) {
+  if (
+       !$self->_is_nick_name($body->{old_nick})
+    || !$self->_is_nick_name($body->{new_nick})
+    || (defined($context->{provenance}{external_identity})
+      && $context->{provenance}{external_identity} ne $body->{old_nick})
+  ) {
     return;
   }
 
@@ -6275,7 +6313,7 @@ sub _render_network_nick_subscription_item {
   }
 
   return {
-    line       => sprintf(':%s NICK :%s', $body->{old_nick}, $body->{new_nick}),
+    line       => Overnet::Program::IRC::Renderer::format_line(':%s NICK :%s', $body->{old_nick}, $body->{new_nick}),
     client_ids => \@client_ids,
   };
 }
@@ -6310,9 +6348,11 @@ sub _render_private_message_item {
   my $display_target_nick = $self->_canonical_current_nick($target_nick) || $target_nick;
   my $line;
   if ($event_type eq 'chat.dm_message') {
-    $line = sprintf(':%s PRIVMSG %s :%s', $nick, $display_target_nick, $body->{text});
+    $line =
+      Overnet::Program::IRC::Renderer::format_line(':%s PRIVMSG %s :%s', $nick, $display_target_nick, $body->{text});
   } elsif ($event_type eq 'chat.dm_notice') {
-    $line = sprintf(':%s NOTICE %s :%s', $nick, $display_target_nick, $body->{text});
+    $line =
+      Overnet::Program::IRC::Renderer::format_line(':%s NOTICE %s :%s', $nick, $display_target_nick, $body->{text});
   } else {
     return;
   }
@@ -6360,9 +6400,11 @@ sub _render_opaque_private_message_item {
   my $body                = $self->_encode_e2ee_dm_body($transport);
   my $line;
   if ($event_type eq 'chat.dm_message') {
-    $line = sprintf(':%s PRIVMSG %s :%s', $sender_identity, $display_target_nick, $body);
+    $line =
+      Overnet::Program::IRC::Renderer::format_line(':%s PRIVMSG %s :%s', $sender_identity, $display_target_nick, $body);
   } elsif ($event_type eq 'chat.dm_notice') {
-    $line = sprintf(':%s NOTICE %s :%s', $sender_identity, $display_target_nick, $body);
+    $line =
+      Overnet::Program::IRC::Renderer::format_line(':%s NOTICE %s :%s', $sender_identity, $display_target_nick, $body);
   } else {
     return;
   }
@@ -6411,7 +6453,7 @@ sub _decode_e2ee_dm_body {
     return (undef, 'Malformed overnet-e2ee body: base64 decode failed', 1);
   }
 
-  my $transport = eval { JSON::decode_json($decoded) };
+  my $transport = eval { Overnet::Core::JSON::decode_json($decoded) };
   if ($EVAL_ERROR || ref($transport) ne 'HASH') {
     return (undef, 'Malformed overnet-e2ee body: transport JSON is invalid', 1);
   }
@@ -6587,7 +6629,7 @@ sub _private_message_candidate_meta {
 
 sub _private_message_candidate_content {
   my ($candidate) = @_;
-  my $content = eval { JSON::decode_json($candidate->{content}) };
+  my $content = eval { Overnet::Core::JSON::decode_json($candidate->{content}) };
   if (!(ref($content) eq 'HASH')) {
     croak "Encrypted private-message candidate content must decode to an object\n";
   }
@@ -6650,7 +6692,10 @@ sub _emit_wrapped_private_message_candidate {
         source => {
           protocol => 'irc',
           network  => $self->{config}{network},
-          line     => sprintf(':%s %s %s :%s', $sender->{nick}, $irc_command, $recipient->{nick}, $body->{text}),
+          line     => Overnet::Program::IRC::Renderer::format_line(
+            ':%s %s %s :%s',
+            $sender->{nick}, $irc_command, $recipient->{nick}, $body->{text}
+          ),
         },
         transport => {
           %{$transport->{transport}->to_hash}, decrypted_rumor => $transport->{decrypted_rumor}->to_hash,
@@ -6773,7 +6818,10 @@ sub _emit_valid_opaque_private_message {
         source => {
           protocol => 'irc',
           network  => $self->{config}{network},
-          line     => sprintf(':%s %s %s :%s', $client->{nick}, $command, $recipient->{nick}, $body_text),
+          line     => Overnet::Program::IRC::Renderer::format_line(
+            ':%s %s %s :%s',
+            $client->{nick}, $command, $recipient->{nick}, $body_text
+          ),
         },
         private_type    => $private_type,
         object_type     => 'chat.dm',
@@ -7013,12 +7061,12 @@ sub _channel_object_id {
     return;
   }
 
-  return q{irc:} . $self->{config}{network} . q{:} . $canonical;
+  return q{irc:} . $self->{config}{network} . q{:} . $self->_channel_key($canonical);
 }
 
 sub _dm_object_id {
   my ($self, $nick) = @_;
-  return q{irc:} . $self->{config}{network} . ':dm:' . $nick;
+  return q{irc:} . $self->{config}{network} . ':dm:' . $self->_nick_key($nick);
 }
 
 sub _send_names_list {
@@ -7230,8 +7278,9 @@ sub _send_line_to_client_ids {
       next;
     }
 
-    $self->_send_client_line($client_id, $line);
-    $count++;
+    if ($self->_send_client_line($client_id, $line)) {
+      $count++;
+    }
   }
 
   return $count;
@@ -7242,9 +7291,23 @@ sub _send_client_line {
   my $client = $self->{clients}{$client_id}
     or return 0;
 
+  return 0 if !defined $line;
+  if (!Overnet::Program::IRC::Renderer::line_is_valid($line)) {
+    Overnet::Program::IRC::Renderer::rendering_failure();
+    return 0;
+  }
+
   $line = $self->_decorate_outbound_line_for_client($client, $line);
-  my $payload = encode('UTF-8', $line . "\r\n", Encode::FB_CROAK);
-  my $offset  = 0;
+  if (!Overnet::Program::IRC::Renderer::line_is_valid($line)) {
+    Overnet::Program::IRC::Renderer::rendering_failure();
+    return 0;
+  }
+  my $payload = eval { encode('UTF-8', $line . "\r\n", Encode::FB_CROAK) };
+  if (!defined $payload) {
+    Overnet::Program::IRC::Renderer::rendering_failure();
+    return 0;
+  }
+  my $offset = 0;
   while ($offset < length $payload) {
     my $written = syswrite($client->{socket}, $payload, length($payload) - $offset, $offset);
     if (!defined $written) {

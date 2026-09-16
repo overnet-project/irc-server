@@ -86,3 +86,6 @@ t/server-emit.t
 t/server-run.t
 t/server-state.t
 t/write-failures.t
+lib/Overnet/Program/IRC/Script/AuthInit.pm
+lib/Overnet/Program/IRC/Script/Connect.pm
+lib/Overnet/Program/IRC/Script/Keygen.pm

@@ -1,0 +1,30 @@
+logLevel = 2
+identd = false
+send_quit_on_client_close = "Client closed"
+
+[server.1]
+bind = "127.0.0.1"
+port = 7778
+
+[fileserving]
+enabled = true
+webroot = www/
+
+[transports]
+websocket
+sockjs
+kiwiirc
+
+[allowed_origins]
+"http://127.0.0.1:7778"
+"http://localhost:7778"
+
+[upstream.1]
+hostname = "127.0.0.1"
+port = 6667
+tls = false
+timeout = 5
+throttle = 10
+
+[gateway]
+enabled = false

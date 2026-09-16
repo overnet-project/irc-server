@@ -642,4 +642,27 @@ subtest 'set_authoritative_account tracks changes and notifies watchers' => sub 
     1, 'a client with no interested watchers sends no notify';
 };
 
+subtest 'reauthenticating the same account clears its previous delegation' => sub {
+  my $server = _server();
+  my $client = $server->add_client(1, authority_pubkey => 'a' x 64,
+    authority_delegate_event_id => 'b' x 64, authority_delegate_key => Overnet::Core::Nostr->generate_key);
+  Overnet::Program::IRC::Command::Auth::apply_authoritative_auth_validation(
+    $server, $client, {valid => 1, pubkey => 'a' x 64});
+  is $client->{authority_pubkey}, 'a' x 64, 'account remains authenticated';
+  ok !exists $client->{authority_delegate_event_id}, 'old grant is cleared';
+  ok !exists $client->{authority_delegate_key}, 'old delegate key is discarded';
+};
+
+subtest 'SASL rejects oversized chunks and duplicate JSON members' => sub {
+  my $server = _server();
+  my $client = $server->add_client(1, nick => 'alice', capabilities => {sasl => 1});
+  for my $argument ('A' x 401, encode_base64('{"auth_event":{},"auth_event":{}}', q{})) {
+    Overnet::Program::IRC::Command::Auth::start_sasl_nostr_exchange($server, $client);
+    Overnet::Program::IRC::Command::Auth::handle_authenticate($server, 1, [$argument]);
+    like _last_notice($server, 1), qr/904/, 'malformed exchange fails';
+    ok !exists $client->{authority_pubkey}, 'no account is bound';
+    is $client->{sasl_buffer}, q{}, 'buffer is cleared';
+  }
+};
+
 done_testing;

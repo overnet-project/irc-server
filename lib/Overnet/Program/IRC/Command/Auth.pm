@@ -9,6 +9,8 @@ use Overnet::Auth::Exchange;
 use Overnet::Core::Nostr;
 use Overnet::Program::IRC::Renderer ();
 
+use Overnet::Core::JSON ();
+
 our $VERSION = '0.001';
 
 my %OVERNETAUTH_HANDLERS = (
@@ -30,8 +32,13 @@ sub handle_cap {
       $client->{cap_negotiation_active} = 1;
     }
 
-    return $server->_send_client_line($client_id,
-      sprintf(':%s CAP * LS :%s', $server->{config}{server_name}, join(q{ }, @supported)),
+    return $server->_send_client_line(
+      $client_id,
+      Overnet::Program::IRC::Renderer::format_line(
+        ':%s CAP * LS :%s',
+        $server->{config}{server_name},
+        join(q{ }, @supported)
+      ),
     );
   }
 
@@ -57,13 +64,19 @@ sub handle_cap {
         $client->{capabilities}{'message-tags'} = 1;
       }
 
-      return $server->_send_client_line($client_id,
-        sprintf(':%s CAP * ACK :%s', $server->{config}{server_name}, join(q{ }, @requested)),
+      return $server->_send_client_line(
+        $client_id,
+        Overnet::Program::IRC::Renderer::format_line(
+          ':%s CAP * ACK :%s',
+          $server->{config}{server_name},
+          join(q{ }, @requested)
+        ),
       );
     }
 
     return $server->_send_client_line($client_id,
-      sprintf(':%s CAP * NAK :%s', $server->{config}{server_name}, $params[1]),);
+      Overnet::Program::IRC::Renderer::format_line(':%s CAP * NAK :%s', $server->{config}{server_name}, $params[1]),
+    );
   }
 
   if ($subcommand eq 'END') {
@@ -122,6 +135,13 @@ sub handle_authenticate {
     return complete_sasl_exchange($server, $client_id);
   }
 
+  if ( length($argument) > 400
+    || $argument !~ /\A[A-Za-z0-9+\/=]+\z/mxs
+    || length($client->{sasl_buffer} || q{}) + length($argument) > 65_536) {
+    reset_sasl_state($server, $client);
+    $server->_send_sasl_fail($client_id);
+    return 1;
+  }
   $client->{sasl_buffer} .= $argument;
   return 1 if length($argument) == 400;
   return complete_sasl_exchange($server, $client_id);
@@ -243,8 +263,7 @@ sub _has_param {
 
 sub _decoded_event_param {
   my ($encoded) = @_;
-  my $decoded   = eval { decode_base64($encoded) };
-  return eval { JSON::decode_json($decoded) };
+  return eval { Overnet::Core::JSON::decode_base64_json($encoded) };
 }
 
 sub _client_has_authority_pubkey {
@@ -350,8 +369,7 @@ sub complete_sasl_exchange {
   my $client = $server->{clients}{$client_id}
     or return 0;
 
-  my $decoded = eval { decode_base64($client->{sasl_buffer} || q{}) };
-  my $payload = eval { JSON::decode_json($decoded) };
+  my $payload = eval { Overnet::Core::JSON::decode_base64_json($client->{sasl_buffer} || q{}) };
   if (!(ref($payload) eq 'HASH')) {
     reset_sasl_state($server, $client);
     $server->_send_sasl_fail($client_id);
@@ -381,19 +399,19 @@ sub complete_sasl_exchange {
     return 1;
   }
 
-  apply_authoritative_auth_validation($server, $client, $auth_validation);
+  my $staged = {%{$client}, authority_pubkey => $auth_validation->{pubkey}};
   if ($server->_authority_relay_enabled) {
     if (ref($delegate_offer) eq 'HASH') {
       if (ref($delegate_offer->{key}) eq 'Overnet::Core::Nostr::Key') {
-        $client->{authority_delegate_key} = $delegate_offer->{key};
+        $staged->{authority_delegate_key} = $delegate_offer->{key};
       }
 
       if (defined $delegate_offer->{session_id}) {
-        $client->{authority_delegate_session_id} = $delegate_offer->{session_id};
+        $staged->{authority_delegate_session_id} = $delegate_offer->{session_id};
       }
 
       if (defined $delegate_offer->{expires_at}) {
-        $client->{authority_delegate_expires_at} = $delegate_offer->{expires_at};
+        $staged->{authority_delegate_expires_at} = $delegate_offer->{expires_at};
       }
 
     }
@@ -405,7 +423,7 @@ sub complete_sasl_exchange {
     }
     my $delegate_result = accept_authoritative_delegate_event(
       $server,
-      client          => $client,
+      client          => $staged,
       event_hash      => $payload->{delegate_event},
       relay_url       => $challenge_payload->{relay_url},
       session_id      => $challenge_payload->{session_id},
@@ -418,6 +436,18 @@ sub complete_sasl_exchange {
       reset_sasl_state($server, $client);
       $server->_send_sasl_fail($client_id);
       return 1;
+    }
+  }
+
+  apply_authoritative_auth_validation($server, $client, $auth_validation);
+  if ($server->_authority_relay_enabled) {
+    for my $field (
+      qw(authority_delegate_key authority_delegate_session_id
+      authority_delegate_expires_at authority_delegate_event_id authority_delegate_sequence)
+    ) {
+      if (exists $staged->{$field}) {
+        $client->{$field} = $staged->{$field};
+      }
     }
   }
 
@@ -467,6 +497,8 @@ sub apply_authoritative_auth_validation {
     return 0;
   }
 
+  # Every fresh authentication clears the old grant, even for the same user.
+  _clear_authoritative_delegate_state($server, $client);
   return set_authoritative_account($server, $client, account => $validation->{pubkey},);
 }
 

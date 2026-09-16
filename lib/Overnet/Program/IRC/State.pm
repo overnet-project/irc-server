@@ -54,7 +54,7 @@ sub is_channel_name {
   return
        defined $value
     && !ref($value)
-    && $value =~ /\A[#&][^\x00\x07\r\n ,:]+\z/mxs
+    && $value =~ /\A[#&][^\x00-\x20\x7f,:]+\z/mxs
     ? 1
     : 0;
 }
@@ -64,7 +64,7 @@ sub is_nick_name {
   return
        defined $value
     && !ref($value)
-    && $value =~ /\A[^\x00\x07\r\n ,:#&][^\x00\x07\r\n ,:]*\z/mxs
+    && $value =~ /\A[^\x00-\x20\x7f,:!@#&][^\x00-\x20\x7f,:!@]*\z/mxs
     ? 1
     : 0;
 }

@@ -1,0 +1,25 @@
+{
+  "windowTitle": "Overnet Chat",
+  "startupScreen": "welcome",
+  "kiwiServer": "/webirc/kiwiirc/",
+  "restricted": true,
+  "startupOptions": {
+    "server": "irc.overnet.local",
+    "port": 6667,
+    "tls": false,
+    "nick": "Guest?",
+    "channel": "",
+    "allowNoChannel": true,
+    "showChannel": false,
+    "showPassword": false,
+    "greetingText": "Overnet Chat",
+    "buttonText": "Connect",
+    "infoContent": ""
+  },
+  "plugins": [
+    {
+      "name": "overnet",
+      "url": "static/plugins/overnet.js"
+    }
+  ]
+}

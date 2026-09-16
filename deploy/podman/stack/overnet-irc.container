@@ -21,7 +21,7 @@ Exec=--adapter-id irc.public \
   --signing-key-file /var/lib/overnet/irc/signing-key.pem \
   --health-file /var/lib/overnet/irc/health.json
 
-HealthCmd=perl -MIO::Socket::INET -e "IO::Socket::INET->new(PeerAddr => '127.0.0.1:6667', Timeout => 3) or exit 1"
+HealthCmd=["/usr/bin/perl","-MIO::Socket::INET","-e","IO::Socket::INET->new(PeerAddr => q(127.0.0.1:6667), Timeout => 3) or exit 1"]
 HealthInterval=30s
 HealthTimeout=5s
 HealthStartPeriod=15s

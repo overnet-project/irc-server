@@ -66,6 +66,7 @@ sub _delegated_client {
     authority_pubkey            => 'a' x 64,
     authority_delegate_key      => Overnet::Core::Nostr->generate_key,
     authority_delegate_event_id => 'b' x 64,
+    authority_delegate_expires_at => time + 600,
     %fields,
   );
 }
@@ -167,7 +168,7 @@ subtest 'handle_overnetchannel validates its inputs' => sub {
   $server->clear_sent_lines;
   is Overnet::Program::IRC::Command::Channel::handle_overnetchannel($server, 1, ['INVITES', 'bad name']), 1,
     'an invalid INVITES channel is handled';
-  like _lines($server, 1), qr/403/mxs, 'an invalid INVITES channel reports no such channel';
+  is _lines($server, 1), q{}, 'an unrepresentable target suppresses the entire error line';
 
   is Overnet::Program::IRC::Command::Channel::handle_overnetchannel($server, 99, ['INVITES', $channel]), 1,
     'an unknown INVITES client is handled quietly';

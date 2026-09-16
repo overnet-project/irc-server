@@ -77,7 +77,7 @@ subtest 'helper consumes artifacts from a daemon started from config' => sub {
     scope           => $scope,
     delegate_pubkey => ('f' x 64),
     session_id      => 'session-123',
-    expires_at      => '1744304600',
+    expires_at      => '4000000000',
     interactive     => 1,
     quote           => 1,
   );
@@ -93,7 +93,7 @@ subtest 'helper consumes artifacts from a daemon started from config' => sub {
     [server     => $scope],
     [delegate   => ('f' x 64)],
     [session    => 'session-123'],
-    [expires_at => '1744304600'],
+    [expires_at => '4000000000'],
     ],
     'returned delegate event preserves the expected tags';
 
@@ -120,7 +120,7 @@ subtest 'helper bridge mode consumes a continuous stream against the daemon' => 
     ":server 001 alice :welcome\r\n",
     "-server- OVERNETAUTH CHALLENGE $challenge\r\n",
     "-server- OVERNETAUTH DELEGATE ", ('f' x 64),
-    " session-123 ws://127.0.0.1:7448 1744304600\r\n";
+    " session-123 ws://127.0.0.1:7448 4000000000\r\n";
   my $output = '';
   open my $in,  '<', \$input  or die "open input failed: $!";
   open my $out, '>', \$output or die "open output failed: $!";
@@ -168,7 +168,7 @@ subtest 'helper bridge mode answers SASL NOSTR AUTHENTICATE challenge streams ag
       grant_kind      => 14142,
       delegate_pubkey => ('f' x 64),
       session_id      => 'session-123',
-      expires_at      => '1744304600',
+      expires_at      => '4000000000',
       padding         => ('x' x 700),
     }
   );
@@ -202,7 +202,7 @@ subtest 'helper bridge mode answers SASL NOSTR AUTHENTICATE challenge streams ag
     [server     => $scope],
     [delegate   => ('f' x 64)],
     [session    => 'session-123'],
-    [expires_at => '1744304600'],
+    [expires_at => '4000000000'],
     ],
     'sasl delegate event preserves the server challenge parameters';
 
@@ -232,6 +232,7 @@ sub _start_daemon_from_config {
       endpoint        => $endpoint,
       max_connections => $args{max_connections},
       listen_factory  => sub { return $listener },
+      caller_resolver => sub { +{program_id => 'irc.bridge'} },
     );
     $daemon->run;
     exit 0;
