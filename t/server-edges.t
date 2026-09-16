@@ -1245,6 +1245,8 @@ subtest 'derive and cache corners' => sub {
   ok !$emptyhost->_is_authoritative_channel($channel), 'an empty group host is not authoritative';
 
   is $server->_authority_relay_query_timeout_ms, 1_000, 'the configured query timeout is returned';
+  is JSON::encode_json({timeout_ms => $server->_authority_relay_query_timeout_ms}),
+    '{"timeout_ms":1000}', 'the validated timeout remains a JSON number on the program wire';
   my $plain = _plain_server();
   is $plain->_authority_relay_query_timeout_ms, 1_000, 'a relayless server defaults the query timeout';
   my $badtimeout = _server(authority_relay => {url => 'ws://relay', query_timeout_ms => 'soon',},);

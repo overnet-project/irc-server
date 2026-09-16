@@ -2061,7 +2061,7 @@ sub _authority_relay_query_timeout_ms {
     $timeout_ms = 1_000;
   }
 
-  return $timeout_ms;
+  return 0 + $timeout_ms;
 }
 
 sub _authority_relay_enabled {
