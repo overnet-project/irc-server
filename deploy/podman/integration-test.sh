@@ -37,10 +37,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Poll `podman exec <container> cat <file>` until it contains "status":"ready".
+# The minimal relay image has Perl, but no coreutils such as cat.
 wait_ready() {
   local container="$1" file="$2" what="$3" deadline=$(( SECONDS + 90 ))
-  until podman exec "$container" cat "$file" 2>/dev/null | grep -q '"status":"ready"'; do
+  until podman exec "$container" perl -pe 1 -- "$file" 2>/dev/null | grep -q '"status":"ready"'; do
     if [[ "$(podman inspect -f '{{.State.Running}}' "$container" 2>/dev/null || echo false)" != true ]]; then
       echo "integration: $what exited before becoming ready" >&2
       return 1
@@ -94,7 +94,7 @@ fi
 echo "integration: client completed the DELEGATE round-trip"
 
 # --- corroborate: the grant the frontend published landed in the relay store -
-if ! podman exec "$relay" cat "$relay_store" 2>/dev/null | grep -q '"kind":14142'; then
+if ! podman exec "$relay" perl -pe 1 -- "$relay_store" 2>/dev/null | grep -q '"kind":14142'; then
   echo "integration: FAIL -- no kind-14142 grant found in the relay store" >&2
   exit 1
 fi
